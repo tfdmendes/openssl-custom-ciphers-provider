@@ -1,4 +1,4 @@
-# Include path for tests (to access vectors/ and include/)
+# Include path for tests
 include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
@@ -11,6 +11,5 @@ add_executable(test_prince
 
 target_link_libraries(test_prince PRIVATE ciphers)
 
-# Register with CTest
-enable_testing()
+# Register the test with CTest
 add_test(NAME test_prince COMMAND test_prince)

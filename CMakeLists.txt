@@ -7,16 +7,17 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # Compiler flags
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -Wpedantic -O3")
-set(CMAKE_C_FLAGS_DEBUG "-g -O0 -DDEBUG")
 
-# Include directories
-include_directories(
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-)
+# Enable CTest at root level
+enable_testing()
 
-# Standalone ciphers static library (pure crypto, no OpennSSL dependency)
+# Standalone ciphers static library
 add_library(ciphers STATIC
     src/ciphers/prince.c
+)
+
+target_include_directories(ciphers PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
 # Standalone unit & Known Answer Tests
