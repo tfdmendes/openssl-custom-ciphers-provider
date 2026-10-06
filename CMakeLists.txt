@@ -14,6 +14,8 @@ enable_testing()
 # Standalone ciphers static library
 add_library(ciphers STATIC
     src/ciphers/prince.c
+    src/modes/modes.c
+    src/modes/padding.c
 )
 
 target_include_directories(ciphers PUBLIC
