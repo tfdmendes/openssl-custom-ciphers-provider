@@ -55,7 +55,7 @@ static inline uint64_t load64_be(const uint8_t b[8]) {
     return v;
 }
 
-static inline void store64_be(const uint8_t v, uint8_t b[8]) {
+static inline void store64_be(uint64_t v, uint8_t b[8]) {
     for (int i = 0; i < 8; i++) {
         b[i] = (uint8_t)(v >> ((7 - i) * 8));
     }
@@ -121,7 +121,7 @@ static inline uint64_t m_layer(uint64_t in) {
 }
 
 static inline uint64_t inv_m_layer(uint64_t in) {
-    return shift_rows_layer(m_prime_layer(in), 1);
+    return m_prime_layer(shift_rows_layer(in, 1));
 }
 
 static uint64_t prince_core(uint64_t in, uint64_t k1) {
@@ -143,7 +143,7 @@ static uint64_t prince_core(uint64_t in, uint64_t k1) {
         st = inv_s_layer(st);
     }
 
-    st ^= k1 ^= PRINCE_RC[11];
+    st ^= k1 ^ PRINCE_RC[11];
     return st;
 }
 
