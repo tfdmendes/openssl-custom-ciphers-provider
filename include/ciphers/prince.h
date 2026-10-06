@@ -1,7 +1,7 @@
 #ifndef PRINCE_H
 #define PRINCE_H
 
-#include <cstdint>
+#include <stdint.h>
 #include <stdint.h>
 #include <stddef.h>
 
