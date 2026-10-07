@@ -16,7 +16,7 @@
 
 ## TODO
 
-- [ ] Block cipher       - One block cipher that was never part of OpenSSL
+- [x] Block cipher       - One block cipher that was never part of OpenSSL
 - [ ] Stream cipher      - One stream cipher that was never part of OpenSSL
 - [ ] OpenSSL provider   - A dynamically loadable OpenSSL 3 provider
 - [ ] EVP cipher support - Both algorithms must be exposed through OSSL_OP_CIPHER
