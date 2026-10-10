@@ -12,3 +12,8 @@ add_test(NAME test_prince COMMAND test_prince)
 add_executable(test_modes test_modes.c)
 target_link_libraries(test_modes PRIVATE ciphers)
 add_test(NAME test_modes COMMAND test_modes)
+
+# Test runner for Rabbit stream cipher KATs
+add_executable(test_rabbit test_rabbit.c)
+target_link_libraries(test_rabbit PRIVATE ciphers)
+add_test(NAME test_rabbit COMMAND test_rabbit)

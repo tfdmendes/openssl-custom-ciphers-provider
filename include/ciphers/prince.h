@@ -2,7 +2,6 @@
 #define PRINCE_H
 
 #include <stdint.h>
-#include <stdint.h>
 #include <stddef.h>
 
 #ifdef __cplusplus

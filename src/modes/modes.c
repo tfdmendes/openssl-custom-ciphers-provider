@@ -3,7 +3,7 @@
 #include <stdint.h>
 #include <string.h>
 
-static void ctr128_inc(uint8_t *counter, size_t block_size) {
+static void ctr_inc(uint8_t *counter, size_t block_size) {
     for (size_t i = block_size; i > 0; i--) {
         if (++counter[i - 1] != 0) {
             return;
@@ -22,7 +22,7 @@ void mode_ecb_crypt(const void *ctx, block_cipher_fn cipher_fn, size_t block_siz
 void mode_cbc_encrypt(const void *ctx, block_cipher_fn enc_fn, size_t block_size, const uint8_t *iv, const uint8_t *in, uint8_t *out, size_t len, uint8_t *next_iv) {
     if (!ctx || !enc_fn || !iv || !in || !out || block_size == 0) return;
 
-    uint8_t current_iv[64]; // Supprots block sizes up to 64 bytes
+    uint8_t current_iv[64]; // Supports block sizes up to 64 bytes
     if (block_size > sizeof(current_iv)) return;
 
     memcpy(current_iv, iv, block_size);
@@ -75,7 +75,7 @@ void mode_ctr_crypt(const void *ctx, block_cipher_fn enc_fn, size_t block_size, 
     while (len--) {
         if (n == 0) {
             enc_fn(ctx, ivec, ecount_buf);
-            ctr128_inc(ivec, block_size);
+            ctr_inc(ivec, block_size);
         }
         *(out++) = *(in++) ^ ecount_buf[n];
         n = (n + 1 ) % block_size;

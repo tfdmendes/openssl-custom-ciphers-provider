@@ -13,7 +13,8 @@ extern "C" {
  * in: input plaintext buffer
  * in_len: length of input data
  * block_size: cipher block size in bytes (e.g. 8 for PRINCE)
- * out: buffer receiving padded length is stored
+ * out: output buffer, needs room for in_len + block_size bytes
+ * out_len: receives the padded length
  *
  * Returns 0 on success, -1 on error
  */
