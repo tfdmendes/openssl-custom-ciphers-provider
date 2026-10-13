@@ -17,3 +17,13 @@ add_test(NAME test_modes COMMAND test_modes)
 add_executable(test_rabbit test_rabbit.c)
 target_link_libraries(test_rabbit PRIVATE ciphers)
 add_test(NAME test_rabbit COMMAND test_rabbit)
+
+# End-to-end tests through the openssl CLI (needs the provider built first)
+add_test(NAME roundtrip
+         COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/roundtrip.sh $<TARGET_FILE_DIR:customprov>)
+
+# Provider functions exercised through the EVP API
+add_executable(test_provider test_provider.c)
+target_link_libraries(test_provider PRIVATE OpenSSL::Crypto)
+add_dependencies(test_provider customprov)
+add_test(NAME test_provider COMMAND test_provider $<TARGET_FILE_DIR:customprov>)

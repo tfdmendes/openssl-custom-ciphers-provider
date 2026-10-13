@@ -19,9 +19,26 @@ add_library(ciphers STATIC
     src/modes/padding.c
 )
 
+# Linked into the provider (a shared object), so it must be position independent
+set_target_properties(ciphers PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 target_include_directories(ciphers PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
+
+# The OpenSSL provider: a shared library (.so) that openssl loads at runtime
+find_package(OpenSSL 3.0 REQUIRED)
+
+add_library(customprov MODULE
+    src/provider/provider.c
+    src/provider/prince_cipher.c
+    src/provider/rabbit_cipher.c
+)
+
+# No "lib" prefix: openssl looks for customprov.so, not libcustomprov.so
+set_target_properties(customprov PROPERTIES PREFIX "")
+
+target_link_libraries(customprov PRIVATE ciphers OpenSSL::Crypto)
 
 # Standalone unit & Known Answer Tests
 add_subdirectory(tests)
