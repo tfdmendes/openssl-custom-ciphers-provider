@@ -1,0 +1,9 @@
+OpenSSL 3.6.5 29 Sep 2026 (Library: OpenSSL 3.6.5 29 Sep 2026)
+System: Darwin 27.0.0 arm64
+Seconds per measurement: 3
+Build type: Release
+Configured compile command: /usr/bin/cc  -I/Users/tfdmendes/Documents/Repos/openssl-custom-ciphers-provider/include  -Wall -Wextra -Wpedantic -O3 -O3 -DNDEBUG -std=gnu99 -fPIC -o CMakeFiles/ciphers.dir/src/ciphers/prince.c.o -c /Users/tfdmendes/Documents/Repos/openssl-custom-ciphers-provider/src/ciphers/prince.c
+CPU: Apple M2
+Logical CPUs: 8
+Compiler: Apple clang version 21.0.0 (clang-2100.3.34.2)
+CPU details were read separately because the sandbox blocked sysctl in the benchmark script.
