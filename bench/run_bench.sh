@@ -1,36 +1,104 @@
 #!/usr/bin/env bash
-# Benchmark of the custom ciphers against OpenSSL's own, through `openssl speed -evp`.
-# Usage: bench/run_bench.sh [provider dir (default: build)] [seconds (default: 3)]
-# Writes a Markdown table to stdout and the environment to stderr.
-set -eu
+# Usage: bench/run_bench.sh [provider directory] [seconds per measurement]
+set -euo pipefail
+export LC_ALL=C
 
-PROV_DIR=${1:-build}
-SECS=${2:-3}
-OPT=(-provider-path "$PROV_DIR" -provider default -provider customprov)
-CUSTOM=(PRINCE-ECB PRINCE-CBC PRINCE-CTR RABBIT)
-BUILTIN=(AES-128-ECB AES-128-CBC AES-128-CTR ChaCha20)
+# Use the same OpenSSL installation as the macOS build script
+if [ "$(uname -s)" = Darwin ]; then
+    openssl_prefix="$(brew --prefix openssl@3)"
+    export PATH="$openssl_prefix/bin:$PATH"
+fi
 
+openssl_version="$(openssl version)"
+if [[ "$openssl_version" != "OpenSSL 3."* ]]; then
+    echo "OpenSSL 3.x is required to run these benchmarks" >&2
+    exit 1
+fi
+
+provider_dir=${1:-build}
+seconds=${2:-3}
+provider_args=(-provider-path "$provider_dir" -provider default -provider customprov)
+custom_ciphers=(PRINCE-ECB PRINCE-CBC PRINCE-CTR RABBIT)
+builtin_ciphers=(AES-128-ECB AES-128-CBC AES-128-CTR ChaCha20)
+
+if ! [[ "$seconds" =~ ^[1-9][0-9]*$ ]]; then
+    echo "Seconds per measurement must be a positive integer" >&2
+    exit 1
+fi
+
+# Keep environment details separate so stdout can be saved as a Markdown table
 {
-    echo "# Environment"
-    openssl version
-    echo "gcc: $(gcc --version | head -1)"
-    echo "cmake build type: ${CMAKE_BUILD_TYPE:-<none>}; flags from CMakeLists.txt: -O3"
-    echo "kernel: $(uname -srm)"
-    lscpu | grep -E 'Model name|^CPU\(s\)|Flags' | sed -E 's/(Flags:).*(aes).*/\1 ... aes ... (AES-NI present)/;/Flags:/!b' | head -4
-    lscpu | grep -qw aes && echo "AES-NI: yes" || echo "AES-NI: no"
-    echo "seconds per measurement: $SECS"
+    echo "$openssl_version"
+    echo "System: $(uname -srm)"
+    echo "Seconds per measurement: $seconds"
+
+    if [ -f "$provider_dir/CMakeCache.txt" ]; then
+        awk -F= '/^CMAKE_BUILD_TYPE:/ {
+            print "Build type: " ($2 == "" ? "unspecified" : $2)
+        }' "$provider_dir/CMakeCache.txt"
+    fi
+
+    if [ -f "$provider_dir/compile_commands.json" ]; then
+        awk '/"command":/ {
+            sub(/^[[:space:]]*"command": "/, "")
+            sub(/",?$/, "")
+            print "Configured compile command: " $0
+            exit
+        }' "$provider_dir/compile_commands.json"
+    fi
+
+    case "$(uname -s)" in
+        Darwin)
+            echo "CPU: $(sysctl -n machdep.cpu.brand_string 2>/dev/null || echo unavailable)"
+            echo "Logical CPUs: $(sysctl -n hw.logicalcpu 2>/dev/null || echo unavailable)"
+            ;;
+        Linux)
+            if command -v lscpu >/dev/null 2>&1; then
+                lscpu | awk '/^Model name:|^CPU\(s\):|^Architecture:/'
+            else
+                echo "CPU information unavailable"
+            fi
+            ;;
+        *)
+            echo "CPU information unavailable"
+            ;;
+    esac
 } >&2
 
 echo "| Cipher | Provider | 16 B | 64 B | 256 B | 1024 B | 8192 B | 16384 B |"
 echo "|---|---|---:|---:|---:|---:|---:|---:|"
 
-run() { # run <algorithm> <provider label>
-    local line
-    line=$(openssl speed "${OPT[@]}" -seconds "$SECS" -evp "$1" 2>/dev/null | grep -E "^$1 " || true)
-    [ -n "$line" ] || { echo "no result for $1" >&2; return; }
-    # fields: name then six figures such as 19050.74k (thousands of bytes per second)
-    echo "$line" | awk -v p="$2" '{printf "| %s | %s |", $1, p; for (i = 2; i <= 7; i++) printf " %.1f MB/s |", $i/1000; print ""}'
+run_benchmark() {
+    local algorithm=$1
+    local provider=$2
+    local result
+
+    if ! result=$(openssl speed "${provider_args[@]}" -propquery "provider=$provider" \
+        -seconds "$seconds" -mr -evp "$algorithm" 2>&1); then
+        printf 'Benchmark failed for %s\n%s\n' "$algorithm" "$result" >&2
+        return 1
+    fi
+
+    # Machine-readable +F rows contain the algorithm and rates in bytes per second
+    if ! printf '%s\n' "$result" | awk -F: -v algorithm="$algorithm" -v provider="$provider" '
+        $1 == "+F" && $3 == algorithm && NF == 9 {
+            printf "| %s | %s |", algorithm, provider
+            for (i = 4; i <= 9; i++)
+                printf " %.1f MB/s |", $i / 1000000
+            print ""
+            found = 1
+        }
+        END { if (!found) exit 1 }
+    '; then
+        printf 'Cannot read benchmark results for %s\n%s\n' "$algorithm" "$result" >&2
+        return 1
+    fi
 }
 
-for a in "${CUSTOM[@]}"; do run "$a" customprov; done
-for a in "${BUILTIN[@]}"; do run "$a" default; done
+for algorithm in "${custom_ciphers[@]}"; do
+    run_benchmark "$algorithm" customprov
+done
+
+for algorithm in "${builtin_ciphers[@]}"; do
+    run_benchmark "$algorithm" default
+done

@@ -29,6 +29,11 @@ target_include_directories(ciphers PUBLIC
 # The OpenSSL provider: a shared library (.so) that openssl loads at runtime
 find_package(OpenSSL 3.0 REQUIRED)
 
+# Keep the provider on OpenSSL 3 even when newer versions are installed
+if(NOT OPENSSL_VERSION VERSION_LESS "4.0")
+    message(FATAL_ERROR "OpenSSL 3.x is required. Set OPENSSL_ROOT_DIR to your OpenSSL 3 installation.")
+endif()
+
 add_library(customprov MODULE
     src/provider/provider.c
     src/provider/prince_cipher.c
