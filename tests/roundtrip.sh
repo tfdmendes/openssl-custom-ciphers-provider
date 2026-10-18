@@ -1,35 +1,77 @@
 #!/usr/bin/env bash
-# Round-trip and known-answer tests through the real `openssl enc` CLI.
-# Usage: roundtrip.sh <directory containing customprov.so>
-set -u
+set -euo pipefail
 
-PROV_DIR=${1:?usage: roundtrip.sh <provider dir>}
-OPT=(-provider-path "$PROV_DIR" -provider default -provider customprov)
-KEY=00112233445566778899aabbccddeeff
-IV=0102030405060708
-WORK=$(mktemp -d)
-trap 'rm -rf "$WORK"' EXIT
-fail=0
+provider_dir=${1:?Usage: roundtrip.sh <provider directory>}
+provider_args=(-provider-path "$provider_dir" -provider default -provider customprov)
+key=00112233445566778899aabbccddeeff
+iv=0102030405060708
+zero_key=00000000000000000000000000000000
+work_dir=$(mktemp -d)
+trap 'rm -rf "$work_dir"' EXIT
+failed=0
 
-check() { # check <description> <command...>
-    local desc=$1; shift
-    if "$@" >/dev/null 2>&1; then echo "ok   $desc"; else echo "FAIL $desc"; fail=1; fi
+
+# If command fails, record failure and continue testing
+check() {
+    local description=$1
+    shift
+
+    if "$@"; then
+        echo "ok   $description"
+    else
+        echo "FAIL $description"
+        failed=1
+    fi
 }
 
-fails() { # fails <description> <command...>: the command must exit non-zero
-    local desc=$1; shift
-    if "$@" >/dev/null 2>&1; then echo "FAIL $desc (expected an error)"; fail=1; else echo "ok   $desc"; fi
+# Whenever the command must fail, hide its output
+expect_failure() {
+    local description=$1
+    shift
+
+    if "$@" >/dev/null 2>&1; then
+        echo "FAIL $description (expected an error)"
+        failed=1
+    else
+        echo "ok   $description"
+    fi
 }
 
-roundtrip() { # roundtrip <algorithm> <size> [extra enc args...]
-    local alg=$1 size=$2; shift 2
-    head -c "$size" /dev/urandom > "$WORK/plain"
-    openssl enc "${OPT[@]}" "-$alg" -K "$KEY" "$@" -in "$WORK/plain" -out "$WORK/enc" &&
-    openssl enc -d "${OPT[@]}" "-$alg" -K "$KEY" "$@" -in "$WORK/enc" -out "$WORK/dec" &&
-    cmp -s "$WORK/plain" "$WORK/dec"
+# Receiveds the algorithm, file size and any additional OpenSSL arguments (ie, -iv)
+# roundtrip <algorithm> <size> [extra enc args...]
+roundtrip() {
+    local algorithm=$1
+    local size=$2
+    shift 2
+
+    # Stop this particular round trip if a step fails, allow check to report it 
+    if [ "$size" -eq 0 ]; then
+        printf '' > "$work_dir/plain" || return 1
+    else
+        head -c "$size" /dev/urandom > "$work_dir/plain" || return 1
+    fi
+
+    openssl enc "${provider_args[@]}" "-$algorithm" -K "$key" "$@" \
+        -in "$work_dir/plain" -out "$work_dir/encrypted" || return 1
+    openssl enc -d "${provider_args[@]}" "-$algorithm" -K "$key" "$@" \
+        -in "$work_dir/encrypted" -out "$work_dir/decrypted" || return 1
+    cmp "$work_dir/plain" "$work_dir/decrypted"
 }
 
-# 1. Round-trip for every mode and input size (empty, 1 byte, block-1/block/block+1, many blocks, large).
+
+ciphertext_size() {
+    local algorithm=$1
+    local size=$2
+    shift 2
+
+    head -c "$size" /dev/zero |
+        openssl enc "${provider_args[@]}" "-$algorithm" -K "$key" "$@" |
+        wc -c |
+        tr -d '[:space:]'
+}
+
+
+# Round trips around block boundaries and up to 20 MB
 for mode in ECB CBC CTR; do
     for size in 0 1 7 8 9 16 17 1000 1000000 20000000; do
         if [ "$mode" = ECB ]; then
@@ -37,46 +79,61 @@ for mode in ECB CBC CTR; do
                 roundtrip "PRINCE-$mode" "$size"
         else
             check "PRINCE-$mode round-trip, $size bytes" \
-                roundtrip "PRINCE-$mode" "$size" -iv "$IV"
+                roundtrip "PRINCE-$mode" "$size" -iv "$iv"
         fi
     done
 done
 
 for size in 0 1 15 16 17 1000 1000000 20000000; do
-    check "RABBIT round-trip, $size bytes" roundtrip RABBIT "$size" -iv "$IV"
+    check "RABBIT round-trip, $size bytes" \
+        roundtrip RABBIT "$size" -iv "$iv"
 done
 
-check "PRINCE-CBC -nopad round-trip, 64 bytes" roundtrip PRINCE-CBC 64 -iv "$IV" -nopad
 
-# 2. Ciphertext sizes: padding adds 1..8 bytes, CTR adds none.
-size_of() {
-    head -c "$2" /dev/zero |
-        openssl enc "${OPT[@]}" "-$1" -K "$KEY" ${3:+-iv "$IV"} |
-        wc -c |
-        tr -d '[:space:]'
-}
+# Padding adds a full block to aligned input; CTR preserves the size
+check "PRINCE-CBC -nopad round-trip, 64 bytes" \
+    roundtrip PRINCE-CBC 64 -iv "$iv" -nopad
+check "ECB: 8 bytes -> 16" \
+    test "$(ciphertext_size PRINCE-ECB 8)" -eq 16
+check "CBC: 9 bytes -> 16" \
+    test "$(ciphertext_size PRINCE-CBC 9 -iv "$iv")" -eq 16
+check "CTR: 9 bytes -> 9" \
+    test "$(ciphertext_size PRINCE-CTR 9 -iv "$iv")" -eq 9
 
-[ "$(size_of PRINCE-ECB 8)" = 16 ]        && echo "ok   ECB: 8 bytes -> 16 (full padding block)" || { echo "FAIL ECB size"; fail=1; }
-[ "$(size_of PRINCE-CBC 9 iv)" = 16 ]     && echo "ok   CBC: 9 bytes -> 16" || { echo "FAIL CBC size"; fail=1; }
-[ "$(size_of PRINCE-CTR 9 iv)" = 9 ]      && echo "ok   CTR: 9 bytes -> 9" || { echo "FAIL CTR size"; fail=1; }
 
-# 3. Known answer through the CLI: paper test vector (key 0, plaintext 0 -> 818665aa0d02dfda).
-kat=$(printf '\0\0\0\0\0\0\0\0' | openssl enc "${OPT[@]}" -PRINCE-ECB -nopad -K 00000000000000000000000000000000 | xxd -p)
-[ "$kat" = 818665aa0d02dfda ] && echo "ok   PRINCE-ECB paper vector" || { echo "FAIL paper vector ($kat)"; fail=1; }
 
-# Rabbit keystream, RFC 4503 A.2 (all-zero key, IV C373F575C1267E59 written little-endian):
-# encrypting zeros returns the keystream, whose first 16 bytes are the RFC's S[0] reversed.
-kat=$(head -c 16 /dev/zero | openssl enc "${OPT[@]}" -RABBIT -K 00000000000000000000000000000000 -iv 597e26c175f573c3 | xxd -p)
-[ "$kat" = 6d7d012292ccdce0e2120058b94ecd1f ] && echo "ok   RABBIT RFC 4503 keystream" || { echo "FAIL RABBIT keystream ($kat)"; fail=1; }
+# PRINCE paper vector: zero key and zero plaintext
+ciphertext=$(head -c 8 /dev/zero |
+    openssl enc "${provider_args[@]}" -PRINCE-ECB -nopad -K "$zero_key" |
+    xxd -p)
+check "PRINCE-ECB paper vector" \
+    test "$ciphertext" = 818665aa0d02dfda
 
-# 4. Negative tests.
-fails "-nopad with 15 bytes must fail" \
-    bash -c 'head -c 15 /dev/zero | openssl enc "$@" -PRINCE-CBC -nopad -K '"$KEY"' -iv '"$IV" _ "${OPT[@]}"
-head -c 100 /dev/zero | openssl enc "${OPT[@]}" -PRINCE-CBC -K "$KEY" -iv "$IV" -out "$WORK/enc"
-fails "decrypting with the wrong key must fail (bad padding)" \
-    openssl enc -d "${OPT[@]}" -PRINCE-CBC -K ffeeddccbbaa99887766554433221100 -iv "$IV" -in "$WORK/enc"
-head -c 13 "$WORK/enc" > "$WORK/trunc"
-fails "decrypting a truncated ciphertext must fail" \
-    openssl enc -d "${OPT[@]}" -PRINCE-CBC -K "$KEY" -iv "$IV" -in "$WORK/trunc"
+# RFC 4503 A.2: IV and keystream bytes use little-endian order here
+keystream=$(head -c 16 /dev/zero |
+    openssl enc "${provider_args[@]}" -RABBIT -K "$zero_key" -iv 597e26c175f573c3 |
+    xxd -p)
+check "RABBIT RFC 4503 keystream" \
+    test "$keystream" = 6d7d012292ccdce0e2120058b94ecd1f
 
-exit $fail
+
+# Invalid input must be rejected
+head -c 15 /dev/zero > "$work_dir/plain"
+expect_failure "-nopad with 15 bytes must fail" \
+    openssl enc "${provider_args[@]}" -PRINCE-CBC -nopad -K "$key" -iv "$iv" \
+        -in "$work_dir/plain" -out "$work_dir/encrypted"
+
+head -c 100 /dev/zero > "$work_dir/plain"
+openssl enc "${provider_args[@]}" -PRINCE-CBC -K "$key" -iv "$iv" \
+    -in "$work_dir/plain" -out "$work_dir/encrypted"
+expect_failure "decrypting with the wrong key must fail (bad padding)" \
+    openssl enc -d "${provider_args[@]}" -PRINCE-CBC \
+        -K ffeeddccbbaa99887766554433221100 -iv "$iv" \
+        -in "$work_dir/encrypted" -out "$work_dir/decrypted"
+
+head -c 13 "$work_dir/encrypted" > "$work_dir/truncated"
+expect_failure "decrypting a truncated ciphertext must fail" \
+    openssl enc -d "${provider_args[@]}" -PRINCE-CBC -K "$key" -iv "$iv" \
+        -in "$work_dir/truncated" -out "$work_dir/decrypted"
+
+exit "$failed"
