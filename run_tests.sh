@@ -18,7 +18,7 @@ cmake -S "${ROOT_DIR}" -B "${BUILD_DIR}" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 
 # Compile the project and tests
 echo "[2/3] Building targets..."
-cmake --build "${BUILD_DIR}" -- -j"$(nproc)"
+cmake --build "${BUILD_DIR}" --parallel 4
 
 # Run all tests using CTest
 echo "[3/3] Running tests..."

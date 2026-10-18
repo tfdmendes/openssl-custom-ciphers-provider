@@ -31,18 +31,31 @@ roundtrip() { # roundtrip <algorithm> <size> [extra enc args...]
 
 # 1. Round-trip for every mode and input size (empty, 1 byte, block-1/block/block+1, many blocks, large).
 for mode in ECB CBC CTR; do
-    iv_args=(); [ "$mode" != ECB ] && iv_args=(-iv "$IV")
     for size in 0 1 7 8 9 16 17 1000 1000000 20000000; do
-        check "PRINCE-$mode round-trip, $size bytes" roundtrip "PRINCE-$mode" "$size" "${iv_args[@]}"
+        if [ "$mode" = ECB ]; then
+            check "PRINCE-$mode round-trip, $size bytes" \
+                roundtrip "PRINCE-$mode" "$size"
+        else
+            check "PRINCE-$mode round-trip, $size bytes" \
+                roundtrip "PRINCE-$mode" "$size" -iv "$IV"
+        fi
     done
 done
+
 for size in 0 1 15 16 17 1000 1000000 20000000; do
     check "RABBIT round-trip, $size bytes" roundtrip RABBIT "$size" -iv "$IV"
 done
+
 check "PRINCE-CBC -nopad round-trip, 64 bytes" roundtrip PRINCE-CBC 64 -iv "$IV" -nopad
 
 # 2. Ciphertext sizes: padding adds 1..8 bytes, CTR adds none.
-size_of() { head -c "$2" /dev/zero | openssl enc "${OPT[@]}" "-$1" -K "$KEY" ${3:+-iv "$IV"} | wc -c; }
+size_of() {
+    head -c "$2" /dev/zero |
+        openssl enc "${OPT[@]}" "-$1" -K "$KEY" ${3:+-iv "$IV"} |
+        wc -c |
+        tr -d '[:space:]'
+}
+
 [ "$(size_of PRINCE-ECB 8)" = 16 ]        && echo "ok   ECB: 8 bytes -> 16 (full padding block)" || { echo "FAIL ECB size"; fail=1; }
 [ "$(size_of PRINCE-CBC 9 iv)" = 16 ]     && echo "ok   CBC: 9 bytes -> 16" || { echo "FAIL CBC size"; fail=1; }
 [ "$(size_of PRINCE-CTR 9 iv)" = 9 ]      && echo "ok   CTR: 9 bytes -> 9" || { echo "FAIL CTR size"; fail=1; }

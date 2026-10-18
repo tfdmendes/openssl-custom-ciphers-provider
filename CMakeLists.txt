@@ -38,6 +38,10 @@ add_library(customprov MODULE
 # No "lib" prefix: openssl looks for customprov.so, not libcustomprov.so
 set_target_properties(customprov PROPERTIES PREFIX "")
 
+if(APPLE)
+    set_target_properties(customprov PROPERTIES SUFFIX ".dylib")
+endif()
+
 target_link_libraries(customprov PRIVATE ciphers OpenSSL::Crypto)
 
 # Standalone unit & Known Answer Tests
