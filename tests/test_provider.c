@@ -107,6 +107,54 @@ static void test_padding(EVP_CIPHER *c, const char *name) {
     }
 }
 
+static void test_key_required(EVP_CIPHER *c, const char *name) {
+    unsigned char plain[16] = {0}, ref[32], out[32], untouched[32];
+
+    memset(untouched, 0xa5, sizeof(untouched));
+    for (int enc = 0; enc < 2; enc++) {
+        int rl = run(c, enc, 0, plain, sizeof(plain), 0, 0, ref);
+
+        CHECK(rl == (int)sizeof(plain));
+        for (int iv_first = 0; iv_first < 2; iv_first++) {
+            EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
+            EVP_CIPHER_CTX *copy = EVP_CIPHER_CTX_new();
+            int n = -1, f = -1;
+
+            CHECK(ctx != NULL && copy != NULL);
+            if (ctx == NULL || copy == NULL) {
+                EVP_CIPHER_CTX_free(ctx);
+                EVP_CIPHER_CTX_free(copy);
+                return;
+            }
+            CHECK(EVP_CipherInit_ex2(ctx, c, NULL, iv_first ? IV : NULL, enc, NULL));
+            CHECK(EVP_CIPHER_CTX_set_padding(ctx, 0));
+            CHECK(EVP_CIPHER_CTX_copy(copy, ctx));
+
+            memcpy(out, untouched, sizeof(out));
+            CHECK(EVP_CipherUpdate(ctx, out, &n, plain, sizeof(plain)) == 0);
+            CHECK(n == 0 && memcmp(out, untouched, sizeof(out)) == 0);
+            CHECK(EVP_CipherFinal_ex(copy, out, &f) == 0);
+            CHECK(f == 0 && memcmp(out, untouched, sizeof(out)) == 0);
+
+            CHECK(EVP_CipherInit_ex2(ctx, NULL, KEY, iv_first ? NULL : IV, enc, NULL));
+            n = f = 0;
+            CHECK(EVP_CipherUpdate(ctx, out, &n, plain, sizeof(plain)));
+            CHECK(EVP_CipherFinal_ex(ctx, out + n, &f));
+            CHECK(n + f == rl && memcmp(out, ref, sizeof(plain)) == 0);
+
+            CHECK(EVP_CipherInit_ex2(ctx, NULL, NULL, IV, enc, NULL));
+            n = f = 0;
+            CHECK(EVP_CipherUpdate(ctx, out, &n, plain, sizeof(plain)));
+            CHECK(EVP_CipherFinal_ex(ctx, out + n, &f));
+            CHECK(n + f == rl && memcmp(out, ref, sizeof(plain)) == 0);
+
+            EVP_CIPHER_CTX_free(ctx);
+            EVP_CIPHER_CTX_free(copy);
+        }
+    }
+    printf("     %s: key required, staged setup and key reuse preserved\n", name);
+}
+
 static void test_wrong_sizes(EVP_CIPHER *c, const char *name) {
     EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
 
@@ -164,6 +212,7 @@ int main(int argc, char **argv) {
         test_sizes_and_chunks(c, ALGS[i]);
         test_padding(c, ALGS[i]);
         test_wrong_sizes(c, ALGS[i]);
+        test_key_required(c, ALGS[i]);
         test_copy(c, ALGS[i]);
         EVP_CIPHER_free(c);
     }

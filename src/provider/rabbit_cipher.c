@@ -24,6 +24,7 @@
 /** Working state of one operation ("the work sheet"), one per newctx. */
 typedef struct {
     rabbit_ctx_t rabbit;                 /**< Key, IV and keystream state. */
+    int key_set;
     uint8_t iv[RABBIT_IV_SIZE];          /**< Last IV given, re-applied if the key is set after it. */
     int have_iv;                         /**< 1 once an IV was given. */
 } rabbit_cipher_ctx_t;
@@ -146,6 +147,7 @@ static int rabbit_init(void *vctx, const unsigned char *key, size_t keylen,
         if (keylen != RABBIT_KEY_SIZE)
             return 0;
         rabbit_set_key(&ctx->rabbit, key);
+        ctx->key_set = 1;
         if (ctx->have_iv)
             rabbit_set_iv(&ctx->rabbit, ctx->iv);
     }
@@ -177,6 +179,10 @@ static int rabbit_update(void *vctx, unsigned char *out, size_t *outl, size_t ou
                          const unsigned char *in, size_t inl) {
     rabbit_cipher_ctx_t *ctx = vctx;
 
+    *outl = 0;
+    if (!ctx->key_set)
+        return 0;
+
     if (inl > outsize)
         return 0;
     if (inl > 0)
@@ -187,10 +193,13 @@ static int rabbit_update(void *vctx, unsigned char *out, size_t *outl, size_t ou
 
 /** A stream cipher has nothing left to flush. */
 static int rabbit_final(void *vctx, unsigned char *out, size_t *outl, size_t outsize) {
-    (void)vctx;
+    rabbit_cipher_ctx_t *ctx = vctx;
+
     (void)out;
     (void)outsize;
     *outl = 0;
+    if (!ctx->key_set)
+        return 0;
     return 1;
 }
 

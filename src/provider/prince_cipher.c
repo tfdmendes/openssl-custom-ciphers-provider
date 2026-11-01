@@ -39,6 +39,7 @@ typedef struct {
     int encrypt;                         /**< 1 = encrypting, 0 = decrypting. */
     int padding;                         /**< 1 = PKCS#7 padding enabled (ECB/CBC). */
     prince_ctx_t key;                    /**< Expanded key (k0, k0', k1). */
+    int key_set;
     uint8_t iv[PRINCE_BLOCK_SIZE];       /**< CBC: previous ciphertext block. CTR: counter. */
     uint8_t buf[PRINCE_BLOCK_SIZE];      /**< ECB/CBC: bytes waiting to fill a block. */
     size_t buf_len;                      /**< How many bytes of buf are in use. */
@@ -88,6 +89,7 @@ static int prince_init(prince_cipher_ctx_t *ctx, int encrypt,
         if (keylen != PRINCE_KEY_SIZE)
             return 0;
         prince_set_key(&ctx->key, key);
+        ctx->key_set = 1;
     }
 
     /* ECB has no IV; for CBC and CTR it is one block. */
@@ -297,6 +299,10 @@ static int prince_update(void *vctx, unsigned char *out, size_t *outl, size_t ou
                          const unsigned char *in, size_t inl) {
     prince_cipher_ctx_t *ctx = vctx;
 
+    *outl = 0;
+    if (!ctx->key_set)
+        return 0;
+
     if (ctx->mode != PRINCE_MODE_CTR)
         return prince_update_blocks(ctx, out, outl, outsize, in, inl);
 
@@ -328,6 +334,8 @@ static int prince_final(void *vctx, unsigned char *out, size_t *outl, size_t out
     size_t len;
 
     *outl = 0;
+    if (!ctx->key_set)
+        return 0;
     if (ctx->mode == PRINCE_MODE_CTR)
         return 1;
 
