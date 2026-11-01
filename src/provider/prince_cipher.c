@@ -41,6 +41,8 @@ typedef struct {
     prince_ctx_t key;                    /**< Expanded key (k0, k0', k1). */
     int key_set;
     uint8_t iv[PRINCE_BLOCK_SIZE];       /**< CBC: previous ciphertext block. CTR: counter. */
+    uint8_t original_iv[PRINCE_BLOCK_SIZE];
+    int iv_set;
     uint8_t buf[PRINCE_BLOCK_SIZE];      /**< ECB/CBC: bytes waiting to fill a block. */
     size_t buf_len;                      /**< How many bytes of buf are in use. */
     uint8_t ecount[PRINCE_BLOCK_SIZE];   /**< CTR: keystream block not fully used yet. */
@@ -71,8 +73,8 @@ static void prince_freectx(void *vctx) {
 /**
  * @brief Prepares the work sheet for a new operation (shared by encrypt/decrypt init).
  *
- * Either key or iv may be NULL, meaning "leave that one as it is": EVP allows
- * the caller to supply them in separate calls.
+ * A NULL key keeps the existing key. A NULL IV restores the original CBC IV
+ * when available and keeps the current IV in other modes
  *
  * @return 1 on success, 0 if key or IV have the wrong size.
  */
@@ -97,6 +99,12 @@ static int prince_init(prince_cipher_ctx_t *ctx, int encrypt,
         if (ivlen != PRINCE_BLOCK_SIZE)
             return 0;
         memcpy(ctx->iv, iv, PRINCE_BLOCK_SIZE);
+        if (ctx->mode == PRINCE_MODE_CBC) {
+            memcpy(ctx->original_iv, iv, PRINCE_BLOCK_SIZE);
+            ctx->iv_set = 1;
+        }
+    } else if (ctx->mode == PRINCE_MODE_CBC && ctx->iv_set) {
+        memcpy(ctx->iv, ctx->original_iv, PRINCE_BLOCK_SIZE);
     }
     return 1;
 }

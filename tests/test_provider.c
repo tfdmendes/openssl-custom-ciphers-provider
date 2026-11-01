@@ -155,6 +155,42 @@ static void test_key_required(EVP_CIPHER *c, const char *name) {
     printf("     %s: key required, staged setup and key reuse preserved\n", name);
 }
 
+static void test_cbc_reinit(EVP_CIPHER *c) {
+    unsigned char plain[32] = {0}, ciphertext[48], out[48];
+
+    for (int pad = 0; pad < 2; pad++) {
+        int clen = run(c, 1, pad, plain, sizeof(plain), 0, 0, ciphertext);
+
+        CHECK(clen > 0);
+        if (clen <= 0)
+            return;
+        for (int enc = 0; enc < 2; enc++) {
+            EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
+            const unsigned char *input = enc ? plain : ciphertext;
+            const unsigned char *expected = enc ? ciphertext : plain;
+            int inl = enc ? (int)sizeof(plain) : clen;
+            int expected_len = enc ? clen : (int)sizeof(plain);
+
+            CHECK(ctx != NULL);
+            if (ctx == NULL)
+                return;
+            CHECK(EVP_CipherInit_ex2(ctx, c, KEY, IV, enc, NULL));
+            CHECK(EVP_CIPHER_CTX_set_padding(ctx, pad));
+            for (int repeat = 0; repeat < 4; repeat++) {
+                int n = 0, f = 0;
+
+                if (repeat > 0)
+                    CHECK(EVP_CipherInit_ex2(ctx, NULL, NULL, repeat == 2 ? IV : NULL, enc, NULL));
+                CHECK(EVP_CipherUpdate(ctx, out, &n, input, inl));
+                CHECK(EVP_CipherFinal_ex(ctx, out + n, &f));
+                CHECK(n + f == expected_len && memcmp(out, expected, (size_t)expected_len) == 0);
+            }
+            EVP_CIPHER_CTX_free(ctx);
+        }
+    }
+    printf("     PRINCE-CBC: reinitialization restores the original IV\n");
+}
+
 static void test_wrong_sizes(EVP_CIPHER *c, const char *name) {
     EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
 
@@ -214,6 +250,8 @@ int main(int argc, char **argv) {
         test_wrong_sizes(c, ALGS[i]);
         test_key_required(c, ALGS[i]);
         test_copy(c, ALGS[i]);
+        if (strcmp(ALGS[i], "PRINCE-CBC") == 0)
+            test_cbc_reinit(c);
         EVP_CIPHER_free(c);
     }
 
