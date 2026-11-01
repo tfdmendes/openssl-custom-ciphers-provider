@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <openssl/core_dispatch.h>
 #include <openssl/evp.h>
 #include <openssl/provider.h>
 
@@ -191,16 +192,68 @@ static void test_cbc_reinit(EVP_CIPHER *c) {
     printf("     PRINCE-CBC: reinitialization restores the original IV\n");
 }
 
-static void test_wrong_sizes(EVP_CIPHER *c, const char *name) {
+static void test_wrong_key_sizes(EVP_CIPHER *c, const char *name) {
     EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
 
-    printf("     %s: wrong key/IV sizes are rejected\n", name);
+    printf("     %s: wrong key sizes are rejected\n", name);
     CHECK(EVP_CIPHER_get_key_length(c) == 16);
     CHECK(EVP_CipherInit_ex2(ctx, c, KEY, IV, 1, NULL) == 1);
     /* The EVP layer takes the key length from the cipher, so ask for another one explicitly. */
     CHECK(EVP_CIPHER_CTX_set_key_length(ctx, 32) == 0);
     CHECK(EVP_CIPHER_CTX_set_key_length(ctx, 16) == 1);
     EVP_CIPHER_CTX_free(ctx);
+}
+
+static void test_wrong_iv_sizes(EVP_CIPHER *c, const char *name) {
+    const OSSL_PROVIDER *prov = EVP_CIPHER_get0_provider(c);
+    OSSL_FUNC_cipher_newctx_fn *newctx = NULL;
+    OSSL_FUNC_cipher_freectx_fn *freectx = NULL;
+    OSSL_FUNC_cipher_encrypt_init_fn *init[2] = {NULL, NULL};
+    const size_t lengths[] = {0, sizeof(IV) - 1, sizeof(IV) + 1, sizeof(IV)};
+    unsigned char iv[sizeof(IV) + 1] = {0};
+    int no_cache = 0;
+
+    if (EVP_CIPHER_get_iv_length(c) == 0)
+        return;
+    CHECK(EVP_CIPHER_get_iv_length(c) == (int)sizeof(IV));
+
+    /* EVP takes only an IV pointer, so test explicit lengths through provider callbacks */
+    const OSSL_ALGORITHM *algorithms = OSSL_PROVIDER_query_operation(prov, OSSL_OP_CIPHER, &no_cache);
+    CHECK(algorithms != NULL);
+    if (algorithms == NULL)
+        return;
+    for (const OSSL_ALGORITHM *a = algorithms; a->algorithm_names != NULL; a++) {
+        if (strcmp(a->algorithm_names, name) != 0)
+            continue;
+        for (const OSSL_DISPATCH *f = a->implementation; f->function_id != 0; f++) {
+            if (f->function_id == OSSL_FUNC_CIPHER_NEWCTX)
+                newctx = OSSL_FUNC_cipher_newctx(f);
+            else if (f->function_id == OSSL_FUNC_CIPHER_FREECTX)
+                freectx = OSSL_FUNC_cipher_freectx(f);
+            else if (f->function_id == OSSL_FUNC_CIPHER_ENCRYPT_INIT)
+                init[0] = OSSL_FUNC_cipher_encrypt_init(f);
+            else if (f->function_id == OSSL_FUNC_CIPHER_DECRYPT_INIT)
+                init[1] = OSSL_FUNC_cipher_decrypt_init(f);
+        }
+        break;
+    }
+    CHECK(newctx != NULL && freectx != NULL && init[0] != NULL && init[1] != NULL);
+    if (newctx != NULL && freectx != NULL && init[0] != NULL && init[1] != NULL) {
+        for (int direction = 0; direction < 2; direction++) {
+            for (size_t i = 0; i < sizeof(lengths) / sizeof(lengths[0]); i++) {
+                void *ctx = newctx(OSSL_PROVIDER_get0_provider_ctx(prov));
+
+                CHECK(ctx != NULL);
+                if (ctx != NULL) {
+                    CHECK(init[direction](ctx, KEY, sizeof(KEY), iv, lengths[i], NULL)
+                          == (lengths[i] == sizeof(IV)));
+                    freectx(ctx);
+                }
+            }
+        }
+    }
+    OSSL_PROVIDER_unquery_operation(prov, OSSL_OP_CIPHER, algorithms);
+    printf("     %s: provider rejects invalid IV lengths and accepts 8 bytes\n", name);
 }
 
 /* Copying a context in the middle of a stream must continue identically. */
@@ -247,7 +300,8 @@ int main(int argc, char **argv) {
         printf("%s (block %d, iv %d)\n", ALGS[i], EVP_CIPHER_get_block_size(c), EVP_CIPHER_get_iv_length(c));
         test_sizes_and_chunks(c, ALGS[i]);
         test_padding(c, ALGS[i]);
-        test_wrong_sizes(c, ALGS[i]);
+        test_wrong_key_sizes(c, ALGS[i]);
+        test_wrong_iv_sizes(c, ALGS[i]);
         test_key_required(c, ALGS[i]);
         test_copy(c, ALGS[i]);
         if (strcmp(ALGS[i], "PRINCE-CBC") == 0)

@@ -36,9 +36,9 @@ Every iteration of the system consists of two steps:
 1. The 128-bit key is split into eight 16-bit subkeys, `K0` to `K7`.
 2. The state words and the counters are filled by joining pairs of subkeys (with different rules for even and odd `j`).
 3. The system is iterated **4 times**.
-4. Each counter is XORed with a state word, `Cj = Cj ⊕ X(j+4 mod 8)`, so the counters can not be recovered from the key alone.
+4. Each counter is XORed with a state word, `Cj = Cj ⊕ X(j+4 mod 8)`. This mixes the counters with the state reached after the four iterations.
 
-The state after this is called the **master state**.
+The state after this is called the **master state**. All key setup steps are deterministic, so anyone who knows the key can compute the state words and counters, including the final XOR. These steps follow [RFC 4503, Section 2.3](https://www.rfc-editor.org/rfc/rfc4503.html#section-2.3).
 
 
 ## IV Setup

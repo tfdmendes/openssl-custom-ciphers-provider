@@ -31,6 +31,15 @@ fi
     echo "$openssl_version"
     echo "System: $(uname -srm)"
     echo "Seconds per measurement: $seconds"
+    echo "OpenSSL build and runtime configuration:"
+    openssl version -a
+    for variable in OPENSSL_CONF OPENSSL_CONF_INCLUDE OPENSSL_MODULES OPENSSL_armcap OPENSSL_ia32cap; do
+        if value=$(printenv "$variable"); then
+            printf '%s=%s\n' "$variable" "$value"
+        else
+            printf '%s=unset\n' "$variable"
+        fi
+    done
 
     if [ -f "$provider_dir/CMakeCache.txt" ]; then
         awk -F= '/^CMAKE_BUILD_TYPE:/ {

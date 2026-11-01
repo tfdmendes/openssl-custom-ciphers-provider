@@ -26,9 +26,9 @@ This structure is simple but effective, providing the main diffusion and confusi
 
 ## Inside the Core: the PRINCE_core Rounds
 
-The PRINCE_core is an **11-round Substitution-Permutation Network (SPN)** with an symmetric structure: **5 forward rounds, a middle round, and 5 backwards rounds**. This symmetry is a central to the a-reflection property.
+The [original paper](prince_cipher_paper.pdf), Section 2, page 4, defines PRINCE_core as a **12-round Substitution-Permutation Network (SPN)**. The implementation groups its operations into **5 forward rounds, a middle transformation, and 5 backwards rounds**. The middle transformation contains two non-linear layers, S and inverse S, so these eleven groups include all twelve non-linear layers. This symmetric structure supports the a-reflection property; no round is missing from the code.
 
-Each round consists of five simple operations, designed for short logic depth in hardware:
+The regular rounds use the following operations, designed for short logic depth in hardware:
 1. **S-box Layer (S):** every 4-bit nibble in the state is substituted using a single **4x4-bit S-box**. This provides non-linearity and confusion.
 2. **Linear Layer (M'):** this layer diffuses the bits across the 64-bit state. It uses two **16x16 binary matrices**, `M0` and `M1`. The state is split into four 16-bit chuncks. `M0` is applied to chunks 1 and 4, and `M1` to chunks 2 and 3.
 3. **ShiftRows (SR):** this operation, identical in concept to the one in AES, shuffles the nibbles across the 4x4 state matrix. This ensures that nibbles affected by one S-box are spread to different columns for the next round.
@@ -37,4 +37,8 @@ Each round consists of five simple operations, designed for short logic depth in
 
 The **forward rounds** apply these operations in order: S -> M' -> ShiftRows -> XOR RC -> XOR k1. The **backwards rounds** apply them in reverse order using the inverse operations.
 
-The **middle round** is keyless and provides the crucial link for the reflection property. It consists of just three operations: a forward S-box, the M' matrix multiplication and an inverse S-box.
+The **middle transformation** is keyless and provides the crucial link for the reflection property. It consists of three operations: a forward S-box layer, the M' matrix multiplication and an inverse S-box layer.
+
+## Test Vectors
+
+Vectors 1–5 in `tests/vectors/prince_kat.h` come from Appendix A of the [original paper](prince_cipher_paper.pdf), page 19. Vectors 6–9 were supplied through ChatGPT Sol 6.1 as additional test cases.

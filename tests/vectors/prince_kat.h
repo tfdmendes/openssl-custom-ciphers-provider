@@ -10,7 +10,11 @@ typedef struct {
     uint8_t ct[8];
 } prince_kat_vector_t;
 
-/* Official Known Answer Test vectors from ASIACRYPT 2012 specification */
+/*
+ * Vectors 1-5: PRINCE paper, Appendix A (ASIACRYPT 2012)
+ * Vectors 6-9: additional test cases supplied through ChatGPT Sol 6.1
+ * This records how the values were supplied, not their original source
+ */
 static const prince_kat_vector_t PRINCE_KAT_VECTORS[] = {
     /* 1. All zeros */
     {

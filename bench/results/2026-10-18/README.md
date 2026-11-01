@@ -26,4 +26,6 @@ All five test suites passed before measurement. The comparison percentages were 
 
 In this run, Rabbit was faster than ChaCha20 at 16 and 64 bytes and slower at larger sizes. PRINCE was slower than the matching AES modes at every tested size.
 
-This is one run. It does not quantify variation between runs. OpenSSL used its normal runtime implementation selection; the active acceleration paths were not profiled. The performance gaps include the cipher, mode and provider implementations.
+This is one run and does not quantify variation between runs. The benchmark scripts set no hardware-acceleration override. The saved log does not record inherited CPU-capability overrides or the OpenSSL build configuration, and active implementation paths were not profiled. Hardware-acceleration status therefore cannot be confirmed retrospectively.
+
+PRINCE was designed for low latency in hardware, while this implementation is written in C. OpenSSL's optimized implementations and runtime selection may also contribute to the observed differences. These are possible explanations, not measured causes: the comparison measures combined cipher, mode and provider throughput and does not isolate their individual costs.
