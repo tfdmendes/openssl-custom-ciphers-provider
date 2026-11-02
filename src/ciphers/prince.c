@@ -89,9 +89,8 @@ static inline uint64_t inv_s_layer(uint64_t in) {
 static inline uint16_t mat_mult16(uint16_t in, const uint16_t mat[16]) {
     uint16_t out = 0;
     for (int i = 0; i < 16; i++) {
-        if ((in >> i) & 1) {
-            out ^= mat[i];
-        }
+        uint16_t bit = (in >> i) & 1u;
+        out ^= (uint16_t)(bit * mat[i]);
     }
     return out;
 }
