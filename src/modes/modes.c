@@ -83,3 +83,43 @@ void mode_ctr_crypt(const void *ctx, block_cipher_fn enc_fn, size_t block_size, 
 
     *num = n;
 }
+
+void mode_ofb_crypt(const void *ctx, block_cipher_fn enc_fn, size_t block_size, uint8_t *ivec, uint8_t *ecount_buf, unsigned int *num, const uint8_t *in, uint8_t *out, size_t len) {
+    if (!ctx || !enc_fn || !ivec || !ecount_buf || !num || !in || !out || block_size == 0 || *num >= block_size) return;
+
+    unsigned int n = *num;
+    while (len--) {
+        if (n == 0) {
+            enc_fn(ctx, ivec, ecount_buf);
+            memcpy(ivec, ecount_buf, block_size);
+        }
+        *(out++) = *(in++) ^ ecount_buf[n];
+        n = (n + 1) % block_size;
+    }
+    *num = n;
+}
+
+static void mode_cfb_crypt(const void *ctx, block_cipher_fn enc_fn, size_t block_size, uint8_t *ivec, uint8_t *ecount_buf, unsigned int *num, const uint8_t *in, uint8_t *out, size_t len, int encrypt) {
+    if (!ctx || !enc_fn || !ivec || !ecount_buf || !num || !in || !out || block_size == 0 || *num >= block_size) return;
+
+    unsigned int n = *num;
+    while (len--) {
+        if (n == 0)
+            enc_fn(ctx, ivec, ecount_buf);
+        uint8_t input = *(in++);
+        uint8_t output = input ^ ecount_buf[n];
+        /* Save the ciphertext before an in-place decrypt overwrites it */
+        ivec[n] = encrypt ? output : input;
+        *(out++) = output;
+        n = (n + 1) % block_size;
+    }
+    *num = n;
+}
+
+void mode_cfb_encrypt(const void *ctx, block_cipher_fn enc_fn, size_t block_size, uint8_t *ivec, uint8_t *ecount_buf, unsigned int *num, const uint8_t *in, uint8_t *out, size_t len) {
+    mode_cfb_crypt(ctx, enc_fn, block_size, ivec, ecount_buf, num, in, out, len, 1);
+}
+
+void mode_cfb_decrypt(const void *ctx, block_cipher_fn enc_fn, size_t block_size, uint8_t *ivec, uint8_t *ecount_buf, unsigned int *num, const uint8_t *in, uint8_t *out, size_t len) {
+    mode_cfb_crypt(ctx, enc_fn, block_size, ivec, ecount_buf, num, in, out, len, 0);
+}

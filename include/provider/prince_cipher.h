@@ -13,5 +13,7 @@
 extern const OSSL_DISPATCH prince_ecb_functions[];
 extern const OSSL_DISPATCH prince_cbc_functions[];
 extern const OSSL_DISPATCH prince_ctr_functions[];
+extern const OSSL_DISPATCH prince_ofb_functions[];
+extern const OSSL_DISPATCH prince_cfb_functions[];
 
 #endif /* PROVIDER_PRINCE_CIPHER_H */

@@ -41,6 +41,21 @@ void mode_cbc_decrypt(const void *ctx, block_cipher_fn dec_fn, size_t block_size
  */
 void mode_ctr_crypt(const void *ctx, block_cipher_fn enc_fn, size_t block_size, uint8_t *ivec, uint8_t *ecount_buf, unsigned int *num, const uint8_t *in, uint8_t *out, size_t len);
 
+/*
+ * OFB encryption and decryption use the encryption primitive
+ * ivec and ecount_buf each hold block_size bytes, num starts at zero
+ * Keep all three between calls, including after a partial block
+ */
+void mode_ofb_crypt(const void *ctx, block_cipher_fn enc_fn, size_t block_size, uint8_t *ivec, uint8_t *ecount_buf, unsigned int *num, const uint8_t *in, uint8_t *out, size_t len);
+
+/*
+ * CFB uses full-block feedback, so PRINCE uses 64-bit segments
+ * Both directions use the encryption primitive and accept any byte length
+ * ivec, ecount_buf and num have the same lifetime as in OFB
+ */
+void mode_cfb_encrypt(const void *ctx, block_cipher_fn enc_fn, size_t block_size, uint8_t *ivec, uint8_t *ecount_buf, unsigned int *num, const uint8_t *in, uint8_t *out, size_t len);
+void mode_cfb_decrypt(const void *ctx, block_cipher_fn enc_fn, size_t block_size, uint8_t *ivec, uint8_t *ecount_buf, unsigned int *num, const uint8_t *in, uint8_t *out, size_t len);
+
 #ifdef __cplusplus
 }
 #endif

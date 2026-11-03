@@ -1,6 +1,6 @@
 /**
  * @file prince_cipher.c
- * @brief PRINCE block cipher exposed to OpenSSL as a provider cipher (ECB, CBC, CTR).
+ * @brief PRINCE block cipher exposed to OpenSSL (ECB, CBC, CTR, OFB, CFB)
  *
  * This file is only the OpenSSL glue: the cipher itself lives in
  * src/ciphers/prince.c and the modes in src/modes/.
@@ -26,7 +26,9 @@
 typedef enum {
     PRINCE_MODE_ECB,
     PRINCE_MODE_CBC,
-    PRINCE_MODE_CTR
+    PRINCE_MODE_CTR,
+    PRINCE_MODE_OFB,
+    PRINCE_MODE_CFB
 } prince_mode_t;
 
 /**
@@ -35,19 +37,27 @@ typedef enum {
  * OpenSSL creates one per operation (newctx) and hands it back on every call.
  */
 typedef struct {
-    prince_mode_t mode;                  /**< ECB, CBC or CTR (fixed at newctx). */
+    prince_mode_t mode;
     int encrypt;                         /**< 1 = encrypting, 0 = decrypting. */
     int padding;                         /**< 1 = PKCS#7 padding enabled (ECB/CBC). */
     prince_ctx_t key;                    /**< Expanded key (k0, k0', k1). */
     int key_set;
-    uint8_t iv[PRINCE_BLOCK_SIZE];       /**< CBC: previous ciphertext block. CTR: counter. */
+    uint8_t iv[PRINCE_BLOCK_SIZE];
     uint8_t original_iv[PRINCE_BLOCK_SIZE];
     int iv_set;
     uint8_t buf[PRINCE_BLOCK_SIZE];      /**< ECB/CBC: bytes waiting to fill a block. */
     size_t buf_len;                      /**< How many bytes of buf are in use. */
-    uint8_t ecount[PRINCE_BLOCK_SIZE];   /**< CTR: keystream block not fully used yet. */
-    unsigned int num;                    /**< CTR: next unused byte of ecount. */
+    uint8_t ecount[PRINCE_BLOCK_SIZE];
+    unsigned int num;
 } prince_cipher_ctx_t;
+
+static int prince_is_stream(prince_mode_t mode) {
+    return mode == PRINCE_MODE_CTR || mode == PRINCE_MODE_OFB || mode == PRINCE_MODE_CFB;
+}
+
+static int prince_restores_iv(prince_mode_t mode) {
+    return mode == PRINCE_MODE_CBC || mode == PRINCE_MODE_OFB || mode == PRINCE_MODE_CFB;
+}
 
 /** Creates a work sheet for the given mode, padding on by default (as in AES). */
 static void *prince_newctx_mode(prince_mode_t mode) {
@@ -56,7 +66,7 @@ static void *prince_newctx_mode(prince_mode_t mode) {
     if (ctx == NULL)
         return NULL;
     ctx->mode = mode;
-    ctx->padding = (mode != PRINCE_MODE_CTR);
+    ctx->padding = !prince_is_stream(mode);
     return ctx;
 }
 
@@ -64,6 +74,8 @@ static void *prince_newctx_mode(prince_mode_t mode) {
 static void *prince_ecb_newctx(void *provctx) { (void)provctx; return prince_newctx_mode(PRINCE_MODE_ECB); }
 static void *prince_cbc_newctx(void *provctx) { (void)provctx; return prince_newctx_mode(PRINCE_MODE_CBC); }
 static void *prince_ctr_newctx(void *provctx) { (void)provctx; return prince_newctx_mode(PRINCE_MODE_CTR); }
+static void *prince_ofb_newctx(void *provctx) { (void)provctx; return prince_newctx_mode(PRINCE_MODE_OFB); }
+static void *prince_cfb_newctx(void *provctx) { (void)provctx; return prince_newctx_mode(PRINCE_MODE_CFB); }
 
 /** Destroys a work sheet. Wipes it first because it holds the key. */
 static void prince_freectx(void *vctx) {
@@ -73,7 +85,7 @@ static void prince_freectx(void *vctx) {
 /**
  * @brief Prepares the work sheet for a new operation (shared by encrypt/decrypt init).
  *
- * A NULL key keeps the existing key. A NULL IV restores the original CBC IV
+ * A NULL key keeps the existing key. A NULL IV restores the original CBC/OFB/CFB IV
  * when available and keeps the current IV in other modes
  *
  * @return 1 on success, 0 if key or IV have the wrong size.
@@ -94,16 +106,16 @@ static int prince_init(prince_cipher_ctx_t *ctx, int encrypt,
         ctx->key_set = 1;
     }
 
-    /* ECB has no IV; for CBC and CTR it is one block. */
+    /* Every mode except ECB uses an 8-byte IV */
     if (iv != NULL && ctx->mode != PRINCE_MODE_ECB) {
         if (ivlen != PRINCE_BLOCK_SIZE)
             return 0;
         memcpy(ctx->iv, iv, PRINCE_BLOCK_SIZE);
-        if (ctx->mode == PRINCE_MODE_CBC) {
+        if (prince_restores_iv(ctx->mode)) {
             memcpy(ctx->original_iv, iv, PRINCE_BLOCK_SIZE);
             ctx->iv_set = 1;
         }
-    } else if (ctx->mode == PRINCE_MODE_CBC && ctx->iv_set) {
+    } else if (prince_restores_iv(ctx->mode) && ctx->iv_set) {
         memcpy(ctx->iv, ctx->original_iv, PRINCE_BLOCK_SIZE);
     }
     return 1;
@@ -126,15 +138,18 @@ static int prince_fill_common(OSSL_PARAM params[], prince_mode_t mode) {
 
 /** Algorithm-level facts (no work sheet involved): mode, block size, key/IV sizes. */
 static int prince_get_params_mode(OSSL_PARAM params[], prince_mode_t mode) {
-    static const unsigned int evp_mode[] = { EVP_CIPH_ECB_MODE, EVP_CIPH_CBC_MODE, EVP_CIPH_CTR_MODE };
+    static const unsigned int evp_mode[] = {
+        EVP_CIPH_ECB_MODE, EVP_CIPH_CBC_MODE, EVP_CIPH_CTR_MODE,
+        EVP_CIPH_OFB_MODE, EVP_CIPH_CFB_MODE
+    };
     OSSL_PARAM *p;
 
     p = OSSL_PARAM_locate(params, OSSL_CIPHER_PARAM_MODE);
     if (p != NULL && !OSSL_PARAM_set_uint(p, evp_mode[mode]))
         return 0;
     p = OSSL_PARAM_locate(params, OSSL_CIPHER_PARAM_BLOCK_SIZE);
-    /* A stream mode (CTR) reports block size 1: it outputs exactly as many bytes as it gets. */
-    if (p != NULL && !OSSL_PARAM_set_size_t(p, mode == PRINCE_MODE_CTR ? 1 : PRINCE_BLOCK_SIZE))
+    /* Stream modes return one output byte for each input byte */
+    if (p != NULL && !OSSL_PARAM_set_size_t(p, prince_is_stream(mode) ? 1 : PRINCE_BLOCK_SIZE))
         return 0;
     return prince_fill_common(params, mode);
 }
@@ -142,6 +157,8 @@ static int prince_get_params_mode(OSSL_PARAM params[], prince_mode_t mode) {
 static int prince_ecb_get_params(OSSL_PARAM params[]) { return prince_get_params_mode(params, PRINCE_MODE_ECB); }
 static int prince_cbc_get_params(OSSL_PARAM params[]) { return prince_get_params_mode(params, PRINCE_MODE_CBC); }
 static int prince_ctr_get_params(OSSL_PARAM params[]) { return prince_get_params_mode(params, PRINCE_MODE_CTR); }
+static int prince_ofb_get_params(OSSL_PARAM params[]) { return prince_get_params_mode(params, PRINCE_MODE_OFB); }
+static int prince_cfb_get_params(OSSL_PARAM params[]) { return prince_get_params_mode(params, PRINCE_MODE_CFB); }
 
 static const OSSL_PARAM prince_gettable_params_table[] = {
     OSSL_PARAM_uint(OSSL_CIPHER_PARAM_MODE, NULL),
@@ -199,8 +216,7 @@ static int prince_set_ctx_params(void *vctx, const OSSL_PARAM params[]) {
     if (p != NULL) {
         if (!OSSL_PARAM_get_uint(p, &pad))
             return 0;
-        /* CTR is a stream: it never pads, whatever is asked. */
-        ctx->padding = (ctx->mode != PRINCE_MODE_CTR && pad != 0);
+        ctx->padding = (!prince_is_stream(ctx->mode) && pad != 0);
     }
     p = OSSL_PARAM_locate_const(params, OSSL_CIPHER_PARAM_KEYLEN);
     if (p != NULL) {
@@ -311,15 +327,25 @@ static int prince_update(void *vctx, unsigned char *out, size_t *outl, size_t ou
     if (!ctx->key_set)
         return 0;
 
-    if (ctx->mode != PRINCE_MODE_CTR)
+    if (!prince_is_stream(ctx->mode))
         return prince_update_blocks(ctx, out, outl, outsize, in, inl);
 
-    /* CTR is a stream: any length, output size equals input size. */
     if (inl > outsize)
         return 0;
-    if (inl > 0)
-        mode_ctr_crypt(&ctx->key, prince_enc_block, PRINCE_BLOCK_SIZE,
-                       ctx->iv, ctx->ecount, &ctx->num, in, out, inl);
+    if (inl > 0) {
+        if (ctx->mode == PRINCE_MODE_CTR)
+            mode_ctr_crypt(&ctx->key, prince_enc_block, PRINCE_BLOCK_SIZE,
+                           ctx->iv, ctx->ecount, &ctx->num, in, out, inl);
+        else if (ctx->mode == PRINCE_MODE_OFB)
+            mode_ofb_crypt(&ctx->key, prince_enc_block, PRINCE_BLOCK_SIZE,
+                           ctx->iv, ctx->ecount, &ctx->num, in, out, inl);
+        else if (ctx->encrypt)
+            mode_cfb_encrypt(&ctx->key, prince_enc_block, PRINCE_BLOCK_SIZE,
+                             ctx->iv, ctx->ecount, &ctx->num, in, out, inl);
+        else
+            mode_cfb_decrypt(&ctx->key, prince_enc_block, PRINCE_BLOCK_SIZE,
+                             ctx->iv, ctx->ecount, &ctx->num, in, out, inl);
+    }
     *outl = inl;
     return 1;
 }
@@ -327,7 +353,7 @@ static int prince_update(void *vctx, unsigned char *out, size_t *outl, size_t ou
 /**
  * @brief Closes the operation: handles whatever update() left in ctx->buf.
  *
- * - CTR: nothing to do.
+ * - CTR/OFB/CFB: nothing to do
  * - Encrypt + padding: pads the pending bytes to one block (a full padding
  *   block if none are pending) and encrypts it.
  * - Decrypt + padding: decrypts the block update() held back, validates the
@@ -344,7 +370,7 @@ static int prince_final(void *vctx, unsigned char *out, size_t *outl, size_t out
     *outl = 0;
     if (!ctx->key_set)
         return 0;
-    if (ctx->mode == PRINCE_MODE_CTR)
+    if (prince_is_stream(ctx->mode))
         return 1;
 
     if (!ctx->padding)
@@ -400,3 +426,5 @@ static void *prince_dupctx(void *vctx) {
 PRINCE_DISPATCH_TABLE(prince_ecb);
 PRINCE_DISPATCH_TABLE(prince_cbc);
 PRINCE_DISPATCH_TABLE(prince_ctr);
+PRINCE_DISPATCH_TABLE(prince_ofb);
+PRINCE_DISPATCH_TABLE(prince_cfb);
