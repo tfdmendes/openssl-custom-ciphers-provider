@@ -321,7 +321,6 @@ measure_performance() {
     mv "$work_dir/results.md" "$results_file"
     mv "$work_dir/comparison.md" "$comparison_file"
     printf '\nBenchmark completed (UTC): %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$environment_log"
-    printf 'Saved: build/results.md, build/comparison.md\n'
 }
 
 print_table() {
@@ -423,3 +422,11 @@ for stage in "${stages[@]}"; do
     esac
 done
 printf '\nDone.\n'
+if [ "$do_benchmark" -eq 1 ] || [ "$do_report" -eq 1 ]; then
+    printf '\nBenchmark results:\n'
+    printf '  Throughput: %s\n' "$results_file"
+    printf '  Comparison: %s\n' "$comparison_file"
+    if [ -f "$environment_log" ]; then
+        printf '  Environment and raw measurements: %s\n' "$environment_log"
+    fi
+fi
