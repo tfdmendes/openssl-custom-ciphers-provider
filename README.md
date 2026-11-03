@@ -92,7 +92,7 @@ Replace `-PRINCE-CBC` with `-PRINCE-CTR` or `-RABBIT` to try them. For ECB, use 
 The `benchmark` stage measures all eight ciphers with input sizes of 16, 64, 256, 1024, 8192 and 16384 bytes. The measurements use `openssl speed -evp` for encryption and elapsed wall-clock time. It saves:
 
 - `build/results.md`: encryption throughput from the latest successful benchmark, with its timestamp.
-- `build/comparison.md`: each PRINCE mode relative to AES-128 in the same mode, and Rabbit relative to ChaCha20.
+- `build/comparison.md`: each PRINCE mode relative to AES-128 in the same mode, and Rabbit relative to both ChaCha20 and AES-128-CTR.
 - `build/environment.log`: timestamp, OpenSSL version and configuration, CPU information and raw benchmark output.
 
 The two output tables are removed when the `benchmark` stage starts and are written again only after all measurements succeed. The environment log is overwritten for that benchmark. `build`, `check` and `report` preserve these files. The `report` stage prints the two tables and their measurement timestamp. Existing files under `build/benchmarks` are left in place and are never read by the script.

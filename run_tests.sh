@@ -301,8 +301,8 @@ measure_performance() {
     awk -F '\t' '
         { for (col = 3; col <= 8; col++) rates[$1, col] = $col }
         END {
-            split("PRINCE-ECB PRINCE-CBC PRINCE-CTR RABBIT", custom, " ")
-            split("AES-128-ECB AES-128-CBC AES-128-CTR ChaCha20", baseline, " ")
+            pairs = split("PRINCE-ECB PRINCE-CBC PRINCE-CTR RABBIT RABBIT", custom, " ")
+            split("AES-128-ECB AES-128-CBC AES-128-CTR ChaCha20 AES-128-CTR", baseline, " ")
             print "# Relative encryption throughput"
             print ""
             print "Custom throughput / baseline throughput x 100, using unrounded measurements from this run."
@@ -310,7 +310,7 @@ measure_performance() {
             print ""
             print "| Cipher | Baseline | 16 B | 64 B | 256 B | 1024 B | 8192 B | 16384 B |"
             print "|---|---|---:|---:|---:|---:|---:|---:|"
-            for (row = 1; row <= 4; row++) {
+            for (row = 1; row <= pairs; row++) {
                 printf "| %s | %s |", custom[row], baseline[row]
                 for (col = 3; col <= 8; col++) printf " %.2f%% |", 100 * rates[custom[row], col] / rates[baseline[row], col]
                 printf "\n"
