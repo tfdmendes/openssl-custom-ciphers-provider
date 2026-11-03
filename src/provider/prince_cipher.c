@@ -252,25 +252,29 @@ static int prince_decrypt_init(void *vctx, const unsigned char *key, size_t keyl
            && prince_set_ctx_params(vctx, params);
 }
 
-/* Adapters: block_cipher_fn takes a const void *, the PRINCE functions a typed key. */
+/* Adapter: block_cipher_fn takes a const void *, the PRINCE functions a typed key. */
 static void prince_enc_block(const void *key, const uint8_t *in, uint8_t *out) {
     prince_encrypt_block(key, in, out);
 }
 
-static void prince_dec_block(const void *key, const uint8_t *in, uint8_t *out) {
-    prince_decrypt_block(key, in, out);
+/* Same for the multi-block functions. */
+static void prince_enc_blocks(const void *key, const uint8_t *in, uint8_t *out, size_t nblocks) {
+    prince_encrypt_blocks(key, in, out, nblocks);
 }
 
-/** Runs ECB or CBC over whole blocks. len must be a multiple of the block size. */
-static void prince_crypt_blocks(prince_cipher_ctx_t *ctx, const uint8_t *in, uint8_t *out, size_t len) {
-    block_cipher_fn fn = ctx->encrypt ? prince_enc_block : prince_dec_block;
+static void prince_dec_blocks(const void *key, const uint8_t *in, uint8_t *out, size_t nblocks) {
+    prince_decrypt_blocks(key, in, out, nblocks);
+}
 
+/** Runs ECB or CBC over whole blocks. len must be a multiple of the block size. CBC encryption is serial. */
+static void prince_crypt_blocks(prince_cipher_ctx_t *ctx, const uint8_t *in, uint8_t *out, size_t len) {
     if (ctx->mode == PRINCE_MODE_ECB)
-        mode_ecb_crypt(&ctx->key, fn, PRINCE_BLOCK_SIZE, in, out, len);
+        mode_ecb_crypt_blocks(&ctx->key, ctx->encrypt ? prince_enc_blocks : prince_dec_blocks,
+                              PRINCE_BLOCK_SIZE, in, out, len);
     else if (ctx->encrypt)
-        mode_cbc_encrypt(&ctx->key, fn, PRINCE_BLOCK_SIZE, ctx->iv, in, out, len, ctx->iv);
+        mode_cbc_encrypt(&ctx->key, prince_enc_block, PRINCE_BLOCK_SIZE, ctx->iv, in, out, len, ctx->iv);
     else
-        mode_cbc_decrypt(&ctx->key, fn, PRINCE_BLOCK_SIZE, ctx->iv, in, out, len, ctx->iv);
+        mode_cbc_decrypt_blocks(&ctx->key, prince_dec_blocks, PRINCE_BLOCK_SIZE, ctx->iv, in, out, len, ctx->iv);
 }
 
 /**
@@ -334,7 +338,7 @@ static int prince_update(void *vctx, unsigned char *out, size_t *outl, size_t ou
         return 0;
     if (inl > 0) {
         if (ctx->mode == PRINCE_MODE_CTR)
-            mode_ctr_crypt(&ctx->key, prince_enc_block, PRINCE_BLOCK_SIZE,
+            mode_ctr_crypt_blocks(&ctx->key, prince_enc_blocks, PRINCE_BLOCK_SIZE,
                            ctx->iv, ctx->ecount, &ctx->num, in, out, inl);
         else if (ctx->mode == PRINCE_MODE_OFB)
             mode_ofb_crypt(&ctx->key, prince_enc_block, PRINCE_BLOCK_SIZE,

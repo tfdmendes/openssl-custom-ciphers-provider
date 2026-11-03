@@ -112,7 +112,7 @@ The mode tests include official AES-OFB and AES-CFB128 vectors from [NIST SP 800
 ## Notes
 
 - The example key and IV are for testing. Use fresh, unpredictable IVs; never reuse a key/IV pair with OFB, CTR or Rabbit.
-- Encryption does not authenticate files. ECB exposes repeated blocks. The implementation has no constant-time guarantee.
+- Encryption does not authenticate files. ECB exposes repeated blocks. PRINCE does not use lookup tables or branches on secret data, but timing was not tested.
 - PRINCE has a 64-bit block size.
 
 See the [project brief](docs/ossl.pdf) and the [PRINCE paper](docs/prince_cipher_paper.pdf).
