@@ -18,14 +18,14 @@ usage() {
     printf '  all        Run every stage (also the default when no stages are given).\n'
     printf '\nOptions:\n'
     printf '  --seconds N  Positive integer seconds per cipher and input size (default: 3).\n'
-    printf '               Requires the benchmark stage; 8 ciphers x 6 sizes x N seconds.\n'
+    printf '               Requires the benchmark stage; 12 ciphers x 6 sizes x N seconds.\n'
     printf '  --help       Show this help.\n'
     printf '\nSelect one or more stages. Repeated stages run once.\n'
     printf 'check and benchmark require a compiled build; include build to compile first.\n'
     printf 'Only benchmark replaces saved results. report alone makes no new measurements.\n'
     printf '\nExamples (from the repository root):\n'
     printf '  bash run_tests.sh\n'
-    printf '    Run all stages with the default 3 seconds per measurement (about 144 seconds of benchmarks).\n'
+    printf '    Run all stages with the default 3 seconds per measurement (about 216 seconds of benchmarks).\n'
     printf '  bash run_tests.sh build\n'
     printf '    Compile only.\n'
     printf '  bash run_tests.sh check\n'
@@ -33,9 +33,9 @@ usage() {
     printf '  bash run_tests.sh build check\n'
     printf '    Compile first, then run the test suites.\n'
     printf '  bash run_tests.sh benchmark report --seconds 1\n'
-    printf '    Measure fresh performance using the existing build, then display the tables (about 48 seconds).\n'
+    printf '    Measure fresh performance using the existing build, then display the tables (about 72 seconds).\n'
     printf '  bash run_tests.sh all --seconds 2\n'
-    printf '    Run all stages with 2 seconds per measurement (about 96 seconds of benchmarks).\n'
+    printf '    Run all stages with 2 seconds per measurement (about 144 seconds of benchmarks).\n'
     printf '  bash run_tests.sh report\n'
     printf '    Display saved tables and their timestamp without changing the results.\n'
 }
@@ -202,12 +202,12 @@ measure_performance() {
     # Remove previous tables so a failed measurement cannot look like a new result
     rm -f "$results_file" "$comparison_file"
     : > "$environment_log"
-    algorithms=(PRINCE-ECB PRINCE-CBC PRINCE-CTR RABBIT AES-128-ECB AES-128-CBC AES-128-CTR ChaCha20)
-    providers=(customprov customprov customprov customprov default default default default)
+    algorithms=(PRINCE-ECB PRINCE-CBC PRINCE-CTR PRINCE-OFB PRINCE-CFB RABBIT AES-128-ECB AES-128-CBC AES-128-CTR AES-128-OFB AES-128-CFB ChaCha20)
+    providers=(customprov customprov customprov customprov customprov customprov default default default default default default)
     provider_args=(-provider-path "$build_dir" -provider default -provider customprov)
     started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-    printf '8 ciphers x 6 sizes x %s s (~%s s total)\n' "$seconds" "$((48 * seconds))"
+    printf '%s ciphers x 6 sizes x %s s (~%s s total)\n' "${#algorithms[@]}" "$seconds" "$((6 * ${#algorithms[@]} * seconds))"
 
     {
         printf 'Benchmark started (UTC): %s\n' "$started_at"
@@ -240,7 +240,7 @@ measure_performance() {
     for index in "${!algorithms[@]}"; do
         algorithm="${algorithms[$index]}"
         provider="${providers[$index]}"
-        printf '  [%s/8] %s\n' "$((index + 1))" "$algorithm"
+        printf '  [%s/%s] %s\n' "$((index + 1))" "${#algorithms[@]}" "$algorithm"
         printf '\n--- %s (%s) ---\n' "$algorithm" "$provider" >> "$environment_log"
         if output=$(openssl speed "${provider_args[@]}" -propquery "provider=$provider" \
             -elapsed -seconds "$seconds" -mr -evp "$algorithm" 2>&1); then
@@ -301,8 +301,8 @@ measure_performance() {
     awk -F '\t' '
         { for (col = 3; col <= 8; col++) rates[$1, col] = $col }
         END {
-            pairs = split("PRINCE-ECB PRINCE-CBC PRINCE-CTR RABBIT RABBIT", custom, " ")
-            split("AES-128-ECB AES-128-CBC AES-128-CTR ChaCha20 AES-128-CTR", baseline, " ")
+            pairs = split("PRINCE-ECB PRINCE-CBC PRINCE-CTR PRINCE-OFB PRINCE-CFB RABBIT RABBIT", custom, " ")
+            split("AES-128-ECB AES-128-CBC AES-128-CTR AES-128-OFB AES-128-CFB ChaCha20 AES-128-CTR", baseline, " ")
             print "# Relative encryption throughput"
             print ""
             print "Custom throughput / baseline throughput x 100, using unrounded measurements from this run."

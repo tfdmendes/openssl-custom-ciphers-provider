@@ -72,7 +72,7 @@ ciphertext_size() {
 
 
 # Round trips around block boundaries and up to 20 MB
-for mode in ECB CBC CTR; do
+for mode in ECB CBC CTR OFB CFB; do
     for size in 0 1 7 8 9 16 17 1000 1000000 20000000; do
         if [ "$mode" = ECB ]; then
             check "PRINCE-$mode round-trip, $size bytes" \
@@ -90,7 +90,7 @@ for size in 0 1 15 16 17 1000 1000000 20000000; do
 done
 
 
-# Padding adds a full block to aligned input; CTR preserves the size
+# Padding adds a full block to aligned input; stream modes preserve the size
 check "PRINCE-CBC -nopad round-trip, 64 bytes" \
     roundtrip PRINCE-CBC 64 -iv "$iv" -nopad
 check "ECB: 8 bytes -> 16" \
@@ -99,6 +99,15 @@ check "CBC: 9 bytes -> 16" \
     test "$(ciphertext_size PRINCE-CBC 9 -iv "$iv")" -eq 16
 check "CTR: 9 bytes -> 9" \
     test "$(ciphertext_size PRINCE-CTR 9 -iv "$iv")" -eq 9
+
+for mode in OFB CFB; do
+    for size in 0 1 7 8 9 16 17; do
+        check "$mode: $size bytes -> $size" \
+            test "$(ciphertext_size "PRINCE-$mode" "$size" -iv "$iv")" -eq "$size"
+        check "$mode -nopad: $size bytes -> $size" \
+            test "$(ciphertext_size "PRINCE-$mode" "$size" -iv "$iv" -nopad)" -eq "$size"
+    done
+done
 
 
 

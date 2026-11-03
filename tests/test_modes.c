@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <openssl/evp.h>
 #include "ciphers/prince.h"
 #include "modes/modes.h"
 #include "modes/padding.h"
@@ -16,7 +17,7 @@ static void prince_dec_fn(const void *ctx, const uint8_t *in, uint8_t *out) {
 }
 
 static void test_pkcs7_padding(void) {
-    printf("[1/5] Testing PKCS#7 padding...\n");
+    printf("[1/6] Testing PKCS#7 padding...\n");
 
     const size_t block_size = 8;
     uint8_t in[32];
@@ -59,7 +60,7 @@ static void test_pkcs7_padding(void) {
 }
 
 static void test_prince_ecb(void) {
-    printf("[2/5] Testing PRINCE ECB mode...\n");
+    printf("[2/6] Testing PRINCE ECB mode...\n");
     prince_ctx_t ctx;
     uint8_t key[16] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff};
     prince_set_key(&ctx, key);
@@ -79,7 +80,7 @@ static void test_prince_ecb(void) {
 }
 
 static void test_prince_cbc(void) {
-    printf("[3/5] Testing PRINCE CBC mode...\n");
+    printf("[3/6] Testing PRINCE CBC mode...\n");
     prince_ctx_t ctx;
     uint8_t key[16] = {0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0xfe, 0xdc, 0xba, 0x98, 0x76, 0x54, 0x32, 0x10};
     uint8_t iv[8] = {0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80};
@@ -100,7 +101,7 @@ static void test_prince_cbc(void) {
 }
 
 static void test_prince_ctr(void) {
-    printf("[4/5] Testing PRINCE CTR mode (arbitrary length stream)...\n");
+    printf("[4/6] Testing PRINCE CTR mode (arbitrary length stream)...\n");
     prince_ctx_t ctx;
     uint8_t key[16] = {0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99};
     uint8_t iv1[8] = {0xf0, 0xe1, 0xd2, 0xc3, 0xb4, 0xa5, 0x96, 0x87};
@@ -133,12 +134,17 @@ static size_t kat_encrypt(const prince_modes_kat_vector_t *v, const prince_ctx_t
     uint8_t buf[PRINCE_MODES_KAT_MAX_LEN];
     size_t len = v->pt_len;
 
-    if (v->mode == PRINCE_MODE_CTR) {
+    if (v->mode >= PRINCE_MODE_CTR) {
         uint8_t counter[8];
         uint8_t ecount[8];
         unsigned int num = 0;
         memcpy(counter, v->iv, 8);
-        mode_ctr_crypt(ctx, prince_enc_fn, 8, counter, ecount, &num, pt, ct, len);
+        if (v->mode == PRINCE_MODE_OFB)
+            mode_ofb_crypt(ctx, prince_enc_fn, 8, counter, ecount, &num, pt, ct, len);
+        else if (v->mode == PRINCE_MODE_CFB)
+            mode_cfb_encrypt(ctx, prince_enc_fn, 8, counter, ecount, &num, pt, ct, len);
+        else
+            mode_ctr_crypt(ctx, prince_enc_fn, 8, counter, ecount, &num, pt, ct, len);
         return len;
     }
 
@@ -155,12 +161,17 @@ static size_t kat_encrypt(const prince_modes_kat_vector_t *v, const prince_ctx_t
 static long kat_decrypt(const prince_modes_kat_vector_t *v, const prince_ctx_t *ctx, uint8_t *pt) {
     size_t len = v->ct_len;
 
-    if (v->mode == PRINCE_MODE_CTR) {
+    if (v->mode >= PRINCE_MODE_CTR) {
         uint8_t counter[8];
         uint8_t ecount[8];
         unsigned int num = 0;
         memcpy(counter, v->iv, 8);
-        mode_ctr_crypt(ctx, prince_enc_fn, 8, counter, ecount, &num, v->ct, pt, len);
+        if (v->mode == PRINCE_MODE_OFB)
+            mode_ofb_crypt(ctx, prince_enc_fn, 8, counter, ecount, &num, v->ct, pt, len);
+        else if (v->mode == PRINCE_MODE_CFB)
+            mode_cfb_decrypt(ctx, prince_enc_fn, 8, counter, ecount, &num, v->ct, pt, len);
+        else
+            mode_ctr_crypt(ctx, prince_enc_fn, 8, counter, ecount, &num, v->ct, pt, len);
         return (long)len;
     }
 
@@ -173,9 +184,60 @@ static long kat_decrypt(const prince_modes_kat_vector_t *v, const prince_ctx_t *
     return (long)len;
 }
 
+typedef void (*stream_mode_fn)(const void *, block_cipher_fn, size_t, uint8_t *, uint8_t *, unsigned int *, const uint8_t *, uint8_t *, size_t);
+
+static void check_feedback_stream(const char *name, stream_mode_fn mode, const void *ctx,
+                                  block_cipher_fn enc_fn, size_t block_size, const uint8_t *iv,
+                                  const uint8_t *input, const uint8_t *expected, size_t len) {
+    uint8_t reference_iv[16], reference_cache[16], reference[80];
+    unsigned int reference_num = 0;
+
+    memcpy(reference_iv, iv, block_size);
+    memset(reference_cache, 0x5a, sizeof(reference_cache));
+    mode(ctx, enc_fn, block_size, reference_iv, reference_cache, &reference_num, input, reference, len);
+    if (memcmp(reference, expected, len) != 0) {
+        fprintf(stderr, "%s: wrong reference output for %zu bytes\n", name, len);
+        exit(1);
+    }
+
+    for (size_t split = 0; split <= len; split++) {
+        for (int in_place = 0; in_place < 2; in_place++) {
+            uint8_t feedback[16], cache[16], out[80], saved_feedback[16], saved_cache[16];
+            unsigned int num = 0;
+            memcpy(feedback, iv, block_size);
+            memset(cache, 0x5a, sizeof(cache));
+            memset(out, 0xa5, sizeof(out));
+            if (in_place)
+                memcpy(out, input, len);
+
+            mode(ctx, enc_fn, block_size, feedback, cache, &num,
+                 in_place ? out : input, out, split);
+            memcpy(saved_feedback, feedback, block_size);
+            memcpy(saved_cache, cache, block_size);
+            unsigned int saved_num = num;
+            mode(ctx, enc_fn, block_size, feedback, cache, &num,
+                 in_place ? out + split : input + split, out + split, 0);
+            if (num != saved_num || memcmp(feedback, saved_feedback, block_size) != 0
+                    || memcmp(cache, saved_cache, block_size) != 0) {
+                fprintf(stderr, "%s: zero-length update changed state\n", name);
+                exit(1);
+            }
+            mode(ctx, enc_fn, block_size, feedback, cache, &num,
+                 in_place ? out + split : input + split, out + split, len - split);
+            if (memcmp(out, expected, len) != 0 || out[len] != 0xa5
+                    || num != len % block_size || num != reference_num
+                    || memcmp(feedback, reference_iv, block_size) != 0
+                    || memcmp(cache, reference_cache, block_size) != 0) {
+                fprintf(stderr, "%s: length %zu split %zu in_place %d failed\n", name, len, split, in_place);
+                exit(1);
+            }
+        }
+    }
+}
+
 static void test_prince_modes_kat(void) {
-    printf("[5/5] Testing PRINCE ECB/CBC/CTR test vectors...\n");
-    const char *mode_names[] = {"ECB", "CBC", "CTR"};
+    printf("[5/6] Testing PRINCE ECB/CBC/CTR/OFB/CFB test vectors...\n");
+    const char *mode_names[] = {"ECB", "CBC", "CTR", "OFB", "CFB"};
 
     for (size_t i = 0; i < PRINCE_MODES_KAT_COUNT; i++) {
         const prince_modes_kat_vector_t *v = &PRINCE_MODES_KAT_VECTORS[i];
@@ -198,8 +260,73 @@ static void test_prince_modes_kat(void) {
             fprintf(stderr, "Vector %zu (%s, %zu bytes): wrong plaintext\n", i + 1, mode_names[v->mode], v->pt_len);
             exit(1);
         }
+        if (v->mode == PRINCE_MODE_OFB || v->mode == PRINCE_MODE_CFB) {
+            stream_mode_fn encrypt = v->mode == PRINCE_MODE_OFB ? mode_ofb_crypt : mode_cfb_encrypt;
+            stream_mode_fn decrypt = v->mode == PRINCE_MODE_OFB ? mode_ofb_crypt : mode_cfb_decrypt;
+            check_feedback_stream(mode_names[v->mode], encrypt, &ctx, prince_enc_fn, 8,
+                                  v->iv, pt, v->ct, v->pt_len);
+            check_feedback_stream(mode_names[v->mode], decrypt, &ctx, prince_enc_fn, 8,
+                                  v->iv, v->ct, pt, v->ct_len);
+        }
     }
     printf("      %zu vectors passed.\n", (size_t)PRINCE_MODES_KAT_COUNT);
+}
+
+static void aes_enc_fn(const void *ctx, const uint8_t *in, uint8_t *out) {
+    int len = 0;
+    if (!EVP_EncryptUpdate((EVP_CIPHER_CTX *)ctx, out, &len, in, 16) || len != 16) {
+        fprintf(stderr, "AES block encryption failed\n");
+        exit(1);
+    }
+}
+
+static void decode_hex(const char *hex, uint8_t *out, size_t len) {
+    for (size_t i = 0; i < len; i++) {
+        unsigned int value;
+        if (sscanf(hex + i * 2, "%2x", &value) != 1) {
+            fprintf(stderr, "Invalid test vector\n");
+            exit(1);
+        }
+        out[i] = (uint8_t)value;
+    }
+}
+
+static void test_nist_feedback_vectors(void) {
+    /* NIST SP 800-38A F.3.13/F.3.14 and F.4.1/F.4.2, including every byte prefix */
+    const char *plaintext = "6bc1bee22e409f96e93d7e117393172a"
+                            "ae2d8a571e03ac9c9eb76fac45af8e51"
+                            "30c81c46a35ce411e5fbc1191a0a52ef"
+                            "f69f2445df4f9b17ad2b417be66c3710";
+    const char *ciphertexts[] = {
+        "3b3fd92eb72dad20333449f8e83cfb4a7789508d16918f03f53c52dac54ed825"
+        "9740051e9c5fecf64344f7a82260edcc304c6528f659c77866a510d9c1d6ae5e",
+        "3b3fd92eb72dad20333449f8e83cfb4ac8a64537a0b3a93fcde3cdad9f1ce58b"
+        "26751f67a3cbb140b1808cf187a4f4dfc04b05357c5d1c0eeac4c66f9ff7f2e6"
+    };
+    uint8_t key[16], iv[16], pt[64], ct[64];
+    EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
+
+    printf("[6/6] Testing NIST AES OFB/CFB128 vectors, byte splits and in-place operation...\n");
+    decode_hex("2b7e151628aed2a6abf7158809cf4f3c", key, sizeof(key));
+    decode_hex("000102030405060708090a0b0c0d0e0f", iv, sizeof(iv));
+    decode_hex(plaintext, pt, sizeof(pt));
+    if (!ctx || !EVP_EncryptInit_ex2(ctx, EVP_aes_128_ecb(), key, NULL, NULL)
+            || !EVP_CIPHER_CTX_set_padding(ctx, 0)) {
+        fprintf(stderr, "AES setup failed\n");
+        exit(1);
+    }
+    for (int cfb = 0; cfb < 2; cfb++) {
+        const char *name = cfb ? "AES-CFB128" : "AES-OFB";
+        stream_mode_fn encrypt = cfb ? mode_cfb_encrypt : mode_ofb_crypt;
+        stream_mode_fn decrypt = cfb ? mode_cfb_decrypt : mode_ofb_crypt;
+        decode_hex(ciphertexts[cfb], ct, sizeof(ct));
+        for (size_t len = 0; len <= sizeof(pt); len++) {
+            check_feedback_stream(name, encrypt, ctx, aes_enc_fn, 16, iv, pt, ct, len);
+            check_feedback_stream(name, decrypt, ctx, aes_enc_fn, 16, iv, ct, pt, len);
+        }
+    }
+    EVP_CIPHER_CTX_free(ctx);
+    printf("      NIST OFB/CFB128 vectors and streaming checks passed.\n");
 }
 
 int main(void) {
@@ -209,6 +336,7 @@ int main(void) {
     test_prince_cbc();
     test_prince_ctr();
     test_prince_modes_kat();
+    test_nist_feedback_vectors();
     printf("\nAll Modes and Padding tests passed successfully!\n");
     return 0;
 }

@@ -4,7 +4,7 @@
  *
  * OpenSSL loads this shared library and calls OSSL_provider_init(). From there
  * the provider tells OpenSSL who it is (name, version) and which algorithms it
- * offers (PRINCE in three modes, and Rabbit).
+ * offers (PRINCE in five modes, and Rabbit)
  *
  * References:
  *  - https://docs.openssl.org/3.0/man7/provider-base/
@@ -84,6 +84,8 @@ static const OSSL_ALGORITHM prov_ciphers[] = {
     { "PRINCE-ECB", PROV_PROPERTIES, prince_ecb_functions, "PRINCE block cipher, ECB mode" },
     { "PRINCE-CBC", PROV_PROPERTIES, prince_cbc_functions, "PRINCE block cipher, CBC mode" },
     { "PRINCE-CTR", PROV_PROPERTIES, prince_ctr_functions, "PRINCE block cipher, CTR mode" },
+    { "PRINCE-OFB", PROV_PROPERTIES, prince_ofb_functions, "PRINCE block cipher, OFB mode" },
+    { "PRINCE-CFB", PROV_PROPERTIES, prince_cfb_functions, "PRINCE block cipher, CFB mode (64-bit feedback)" },
     { "RABBIT",     PROV_PROPERTIES, rabbit_functions,     "Rabbit stream cipher (RFC 4503)" },
     { NULL, NULL, NULL, NULL }
 };

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Generates tests/vectors/prince_modes_kat.h (PRINCE ECB/CBC/CTR test vectors).
+# Generates tests/vectors/prince_modes_kat.h (PRINCE ECB/CBC/CTR/OFB/CFB vectors)
 #
 # There are no official vectors for PRINCE in modes of operation, so we compute
 # them here with a separate implementation of PRINCE written from the paper
@@ -7,7 +7,8 @@
 # checked against the paper's test vectors before anything is written.
 #
 # ECB and CBC use PKCS#7 padding. CTR uses the 8-byte IV as a big-endian
-# counter (+1 per block), like in NIST SP 800-38A.
+# counter (+1 per block), like in NIST SP 800-38A
+# OFB feeds back encrypted IV blocks; CFB feeds back full ciphertext blocks
 #
 # python3 scripts/gen_prince_modes_kat.py > tests/vectors/prince_modes_kat.h
 
@@ -162,6 +163,23 @@ def ctr(key, iv, pt):
     return bytes(a ^ b for a, b in zip(pt, ks))
 
 
+def ofb(key, iv, pt):
+    feedback, out = iv, b""
+    for i in range(0, len(pt), 8):
+        feedback = enc_block(key, feedback)
+        out += bytes(a ^ b for a, b in zip(pt[i:i + 8], feedback))
+    return out
+
+
+def cfb(key, iv, pt):
+    feedback, out = iv, b""
+    for i in range(0, len(pt), 8):
+        stream = enc_block(key, feedback)
+        feedback = bytes(a ^ b for a, b in zip(pt[i:i + 8], stream))
+        out += feedback
+    return out
+
+
 KEY = bytes.fromhex("00112233445566778899aabbccddeeff")
 IV = bytes.fromhex("0102030405060708")
 IV_WRAP = bytes.fromhex("fffffffffffffffe")  # counter overflows on the 3rd block
@@ -187,6 +205,8 @@ def main():
         rows.append(("PRINCE_MODE_ECB", IV, pt, ecb(KEY, pt)))
         rows.append(("PRINCE_MODE_CBC", IV, pt, cbc(KEY, IV, pt)))
         rows.append(("PRINCE_MODE_CTR", IV, pt, ctr(KEY, IV, pt)))
+        rows.append(("PRINCE_MODE_OFB", IV, pt, ofb(KEY, IV, pt)))
+        rows.append(("PRINCE_MODE_CFB", IV, pt, cfb(KEY, IV, pt)))
     pt = plaintext(37)
     rows.append(("PRINCE_MODE_CTR", IV_WRAP, pt, ctr(KEY, IV_WRAP, pt)))
 
@@ -198,14 +218,15 @@ def main():
 #include <stddef.h>
 
 /*
- * PRINCE test vectors for ECB, CBC and CTR.
- * Generated with scripts/gen_prince_modes_kat.py, don't edit by hand.
+ * PRINCE test vectors for ECB, CBC, CTR, OFB and full-block CFB
+ * Generated with scripts/gen_prince_modes_kat.py, don't edit by hand
  *
- * ECB/CBC use PKCS#7 padding, CTR uses the IV as a big-endian counter.
- * Plaintext byte i is (i * 31 + 7) & 0xff.
+ * ECB/CBC use PKCS#7 padding, CTR uses the IV as a big-endian counter
+ * OFB/CFB preserve the input length, CFB uses 64-bit segments
+ * Plaintext byte i is (i * 31 + 7) & 0xff
  */
 
-typedef enum { PRINCE_MODE_ECB, PRINCE_MODE_CBC, PRINCE_MODE_CTR } prince_mode_t;
+typedef enum { PRINCE_MODE_ECB, PRINCE_MODE_CBC, PRINCE_MODE_CTR, PRINCE_MODE_OFB, PRINCE_MODE_CFB } prince_mode_t;
 """)
     print(f"#define PRINCE_MODES_KAT_MAX_LEN {max_len}\n")
     print("typedef struct {")

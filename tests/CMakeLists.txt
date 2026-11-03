@@ -10,7 +10,7 @@ add_test(NAME test_prince COMMAND test_prince)
 
 # Test runner for Modes & Padding
 add_executable(test_modes test_modes.c)
-target_link_libraries(test_modes PRIVATE ciphers)
+target_link_libraries(test_modes PRIVATE ciphers OpenSSL::Crypto)
 add_test(NAME test_modes COMMAND test_modes)
 
 # Test runner for Rabbit stream cipher KATs

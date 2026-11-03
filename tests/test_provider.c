@@ -11,6 +11,8 @@
 #include <openssl/evp.h>
 #include <openssl/provider.h>
 
+#include "vectors/prince_modes_kat.h"
+
 static int failed = 0;
 
 #define CHECK(cond) do { \
@@ -19,18 +21,19 @@ static int failed = 0;
 
 static const unsigned char KEY[16] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
 static const unsigned char IV[8] = {9, 8, 7, 6, 5, 4, 3, 2};
-static const char *ALGS[] = {"PRINCE-ECB", "PRINCE-CBC", "PRINCE-CTR", "RABBIT"};
-static const int NUM_ALGS = 4;
+static const char *ALGS[] = {"PRINCE-ECB", "PRINCE-CBC", "PRINCE-CTR", "PRINCE-OFB", "PRINCE-CFB", "RABBIT"};
+static const int NUM_ALGS = sizeof(ALGS) / sizeof(ALGS[0]);
 
 /* Runs init + update (in pieces of `chunk` bytes, 0 = all at once) + final. Returns output length or -1. */
-static int run(EVP_CIPHER *c, int enc, int pad, const unsigned char *in, size_t inl,
-               size_t chunk, int in_place, unsigned char *out) {
+static int run_with_key(EVP_CIPHER *c, int enc, int pad, const unsigned char *key,
+                        const unsigned char *iv, const unsigned char *in, size_t inl,
+                        size_t chunk, int in_place, unsigned char *out) {
     EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
     unsigned char *buf = malloc(inl + 64);
     size_t pos = 0, total = 0;
-    int n, ok = ctx != NULL && buf != NULL;
+    int n = 0, ok = ctx != NULL && buf != NULL;
 
-    ok = ok && EVP_CipherInit_ex2(ctx, c, KEY, IV, enc, NULL);
+    ok = ok && EVP_CipherInit_ex2(ctx, c, key, iv, enc, NULL);
     ok = ok && EVP_CIPHER_CTX_set_padding(ctx, pad);
     while (ok && pos < inl) {
         size_t len = (chunk == 0 || chunk > inl - pos) ? inl - pos : chunk;
@@ -40,16 +43,24 @@ static int run(EVP_CIPHER *c, int enc, int pad, const unsigned char *in, size_t 
         } else {
             ok = EVP_CipherUpdate(ctx, buf + total, &n, in + pos, (int)len);
         }
-        total += (size_t)n;
+        if (ok)
+            total += (size_t)n;
         pos += len;
     }
+    n = 0;
     ok = ok && EVP_CipherFinal_ex(ctx, buf + total, &n);
-    total += (size_t)n;
+    if (ok)
+        total += (size_t)n;
     if (ok)
         memcpy(out, buf, total);
     free(buf);
     EVP_CIPHER_CTX_free(ctx);
     return ok ? (int)total : -1;
+}
+
+static int run(EVP_CIPHER *c, int enc, int pad, const unsigned char *in, size_t inl,
+               size_t chunk, int in_place, unsigned char *out) {
+    return run_with_key(c, enc, pad, KEY, IV, in, inl, chunk, in_place, out);
 }
 
 static void test_sizes_and_chunks(EVP_CIPHER *c, const char *name) {
@@ -156,11 +167,12 @@ static void test_key_required(EVP_CIPHER *c, const char *name) {
     printf("     %s: key required, staged setup and key reuse preserved\n", name);
 }
 
-static void test_cbc_reinit(EVP_CIPHER *c) {
-    unsigned char plain[32] = {0}, ciphertext[48], out[48];
+static void test_iv_reinit(EVP_CIPHER *c, const char *name) {
+    unsigned char plain[37] = {0}, ciphertext[48], out[48];
+    size_t plain_len = EVP_CIPHER_get_block_size(c) > 1 ? 32 : sizeof(plain);
 
     for (int pad = 0; pad < 2; pad++) {
-        int clen = run(c, 1, pad, plain, sizeof(plain), 0, 0, ciphertext);
+        int clen = run(c, 1, pad, plain, plain_len, 0, 0, ciphertext);
 
         CHECK(clen > 0);
         if (clen <= 0)
@@ -169,8 +181,8 @@ static void test_cbc_reinit(EVP_CIPHER *c) {
             EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
             const unsigned char *input = enc ? plain : ciphertext;
             const unsigned char *expected = enc ? ciphertext : plain;
-            int inl = enc ? (int)sizeof(plain) : clen;
-            int expected_len = enc ? clen : (int)sizeof(plain);
+            int inl = enc ? (int)plain_len : clen;
+            int expected_len = enc ? clen : (int)plain_len;
 
             CHECK(ctx != NULL);
             if (ctx == NULL)
@@ -189,7 +201,7 @@ static void test_cbc_reinit(EVP_CIPHER *c) {
             EVP_CIPHER_CTX_free(ctx);
         }
     }
-    printf("     PRINCE-CBC: reinitialization restores the original IV\n");
+    printf("     %s: reinitialization restores the original IV\n", name);
 }
 
 static void test_wrong_key_sizes(EVP_CIPHER *c, const char *name) {
@@ -278,6 +290,167 @@ static void test_copy(EVP_CIPHER *c, const char *name) {
     printf("     %s: context copy continues identically\n", name);
 }
 
+static void test_feedback_vectors(EVP_CIPHER *c, const char *name) {
+    static const size_t chunks[] = {0, 1, 3, 8, 13};
+    prince_mode_t mode = strcmp(name, "PRINCE-OFB") == 0 ? PRINCE_MODE_OFB : PRINCE_MODE_CFB;
+    unsigned char plain[PRINCE_MODES_KAT_MAX_LEN], out[PRINCE_MODES_KAT_MAX_LEN + 16];
+    size_t tested = 0;
+
+    CHECK(EVP_CIPHER_get_mode(c) == (mode == PRINCE_MODE_OFB ? EVP_CIPH_OFB_MODE : EVP_CIPH_CFB_MODE));
+    CHECK(EVP_CIPHER_get_key_length(c) == 16);
+    CHECK(EVP_CIPHER_get_iv_length(c) == 8);
+    CHECK(EVP_CIPHER_get_block_size(c) == 1);
+    for (size_t i = 0; i < sizeof(plain); i++)
+        plain[i] = (unsigned char)(i * 31 + 7);
+    for (size_t i = 0; i < PRINCE_MODES_KAT_COUNT; i++) {
+        const prince_modes_kat_vector_t *v = &PRINCE_MODES_KAT_VECTORS[i];
+
+        if (v->mode != mode)
+            continue;
+        tested++;
+        CHECK(v->ct_len == v->pt_len);
+        for (int enc = 0; enc < 2; enc++) {
+            const unsigned char *input = enc ? plain : v->ct;
+            const unsigned char *expected = enc ? v->ct : plain;
+            size_t len = enc ? v->pt_len : v->ct_len;
+
+            for (int pad = 0; pad < 2; pad++) {
+                for (size_t k = 0; k < sizeof(chunks) / sizeof(chunks[0]); k++) {
+                    for (int in_place = 0; in_place < 2; in_place++) {
+                        int n = run_with_key(c, enc, pad, v->key, v->iv, input, len,
+                                             chunks[k], in_place, out);
+
+                        CHECK(n == (int)len && memcmp(out, expected, len) == 0);
+                    }
+                }
+            }
+            if (len > 5) {
+                EVP_CIPHER_CTX *a = EVP_CIPHER_CTX_new(), *b = EVP_CIPHER_CTX_new();
+                unsigned char tail[PRINCE_MODES_KAT_MAX_LEN + 16];
+                int n = 0, f = 0;
+
+                CHECK(a != NULL && b != NULL);
+                if (a != NULL && b != NULL) {
+                    CHECK(EVP_CipherInit_ex2(a, c, v->key, v->iv, enc, NULL));
+                    CHECK(EVP_CipherUpdate(a, out, &n, input, 5) && n == 5);
+                    CHECK(EVP_CIPHER_CTX_copy(b, a));
+                    CHECK(EVP_CipherUpdate(a, out + 5, &n, input + 5, (int)len - 5));
+                    CHECK(n == (int)len - 5);
+                    CHECK(EVP_CipherFinal_ex(a, out + len, &f) && f == 0);
+                    CHECK(memcmp(out, expected, len) == 0);
+                    CHECK(EVP_CipherUpdate(b, tail, &n, input + 5, (int)len - 5));
+                    CHECK(n == (int)len - 5);
+                    CHECK(EVP_CipherFinal_ex(b, tail + n, &f) && f == 0);
+                    CHECK(memcmp(tail, expected + 5, len - 5) == 0);
+                }
+                EVP_CIPHER_CTX_free(a);
+                EVP_CIPHER_CTX_free(b);
+            }
+        }
+    }
+    CHECK(tested > 0);
+    printf("     %s: %zu independent vectors, exact stream lengths and padding ignored\n", name, tested);
+}
+
+static void test_feedback_rekey(EVP_CIPHER *c, const char *name) {
+    unsigned char key[16], iv[8], plain[37], ref[48], out[48];
+
+    for (size_t i = 0; i < sizeof(key); i++)
+        key[i] = (unsigned char)(31 - i);
+    for (size_t i = 0; i < sizeof(iv); i++)
+        iv[i] = (unsigned char)(0x90 + i);
+    for (size_t i = 0; i < sizeof(plain); i++)
+        plain[i] = (unsigned char)(i * 3 + 11);
+    for (int enc = 0; enc < 2; enc++) {
+        EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
+        int n = 0, f = 0;
+
+        CHECK(ctx != NULL);
+        if (ctx == NULL)
+            return;
+        CHECK(EVP_CipherInit_ex2(ctx, c, KEY, IV, enc, NULL));
+        CHECK(EVP_CipherUpdate(ctx, out, &n, plain, 5));
+        CHECK(n == 5);
+        CHECK(EVP_CipherInit_ex2(ctx, NULL, key, NULL, enc, NULL));
+        CHECK(run_with_key(c, enc, 1, key, IV, plain, sizeof(plain), 0, 0, ref) == (int)sizeof(plain));
+        CHECK(EVP_CipherUpdate(ctx, out, &n, plain, sizeof(plain)));
+        CHECK(n == (int)sizeof(plain));
+        CHECK(EVP_CipherFinal_ex(ctx, out + n, &f));
+        CHECK(f == 0 && memcmp(out, ref, sizeof(plain)) == 0);
+
+        CHECK(EVP_CipherInit_ex2(ctx, NULL, NULL, iv, enc, NULL));
+        CHECK(run_with_key(c, enc, 1, key, iv, plain, sizeof(plain), 0, 0, ref) == (int)sizeof(plain));
+        CHECK(EVP_CipherUpdate(ctx, out, &n, plain, sizeof(plain)));
+        CHECK(n == (int)sizeof(plain));
+        CHECK(EVP_CipherFinal_ex(ctx, out + n, &f));
+        CHECK(f == 0 && memcmp(out, ref, sizeof(plain)) == 0);
+        EVP_CIPHER_CTX_free(ctx);
+    }
+    printf("     %s: rekey discards partial keystream and explicit IV replaces feedback\n", name);
+}
+
+static void test_feedback_callbacks(EVP_CIPHER *c, const char *name) {
+    const OSSL_PROVIDER *prov = EVP_CIPHER_get0_provider(c);
+    OSSL_FUNC_cipher_newctx_fn *newctx = NULL;
+    OSSL_FUNC_cipher_freectx_fn *freectx = NULL;
+    OSSL_FUNC_cipher_encrypt_init_fn *init[2] = {NULL, NULL};
+    OSSL_FUNC_cipher_update_fn *update = NULL;
+    OSSL_FUNC_cipher_final_fn *final = NULL;
+    unsigned char plain[37], ref[48], out[48], untouched[48];
+    int no_cache = 0;
+    const OSSL_ALGORITHM *algorithms = OSSL_PROVIDER_query_operation(prov, OSSL_OP_CIPHER, &no_cache);
+
+    CHECK(algorithms != NULL);
+    if (algorithms == NULL)
+        return;
+    for (const OSSL_ALGORITHM *a = algorithms; a->algorithm_names != NULL; a++) {
+        if (strcmp(a->algorithm_names, name) != 0)
+            continue;
+        for (const OSSL_DISPATCH *f = a->implementation; f->function_id != 0; f++) {
+            switch (f->function_id) {
+            case OSSL_FUNC_CIPHER_NEWCTX: newctx = OSSL_FUNC_cipher_newctx(f); break;
+            case OSSL_FUNC_CIPHER_FREECTX: freectx = OSSL_FUNC_cipher_freectx(f); break;
+            case OSSL_FUNC_CIPHER_ENCRYPT_INIT: init[1] = OSSL_FUNC_cipher_encrypt_init(f); break;
+            case OSSL_FUNC_CIPHER_DECRYPT_INIT: init[0] = OSSL_FUNC_cipher_decrypt_init(f); break;
+            case OSSL_FUNC_CIPHER_UPDATE: update = OSSL_FUNC_cipher_update(f); break;
+            case OSSL_FUNC_CIPHER_FINAL: final = OSSL_FUNC_cipher_final(f); break;
+            }
+        }
+        break;
+    }
+    CHECK(newctx != NULL && freectx != NULL && init[0] != NULL && init[1] != NULL
+          && update != NULL && final != NULL);
+    for (size_t i = 0; i < sizeof(plain); i++)
+        plain[i] = (unsigned char)(i * 7 + 1);
+    memset(untouched, 0xa5, sizeof(untouched));
+    if (newctx != NULL && freectx != NULL && init[0] != NULL && init[1] != NULL
+        && update != NULL && final != NULL) {
+        for (int enc = 0; enc < 2; enc++) {
+            void *ctx = newctx(OSSL_PROVIDER_get0_provider_ctx(prov));
+            size_t n = 999;
+
+            CHECK(ctx != NULL);
+            if (ctx == NULL)
+                continue;
+            CHECK(run(c, enc, 0, plain, sizeof(plain), 0, 0, ref) == (int)sizeof(plain));
+            CHECK(init[enc](ctx, KEY, sizeof(KEY), IV, sizeof(IV), NULL));
+            CHECK(update(ctx, NULL, &n, 0, NULL, 0) && n == 0);
+            CHECK(update(ctx, out, &n, sizeof(out), plain, 5) && n == 5);
+            CHECK(memcmp(out, ref, 5) == 0);
+            CHECK(update(ctx, NULL, &n, 0, NULL, 0) && n == 0);
+            memcpy(out, untouched, sizeof(out));
+            CHECK(update(ctx, out, &n, 31, plain + 5, 32) == 0);
+            CHECK(n == 0 && memcmp(out, untouched, sizeof(out)) == 0);
+            CHECK(update(ctx, out, &n, sizeof(out), plain + 5, 32) && n == 32);
+            CHECK(memcmp(out, ref + 5, 32) == 0);
+            CHECK(final(ctx, NULL, &n, 0) && n == 0);
+            freectx(ctx);
+        }
+    }
+    OSSL_PROVIDER_unquery_operation(prov, OSSL_OP_CIPHER, algorithms);
+    printf("     %s: zero-length calls and short output preserve stream state\n", name);
+}
+
 int main(int argc, char **argv) {
     OSSL_PROVIDER *def, *prov;
 
@@ -304,8 +477,14 @@ int main(int argc, char **argv) {
         test_wrong_iv_sizes(c, ALGS[i]);
         test_key_required(c, ALGS[i]);
         test_copy(c, ALGS[i]);
-        if (strcmp(ALGS[i], "PRINCE-CBC") == 0)
-            test_cbc_reinit(c);
+        if (strcmp(ALGS[i], "PRINCE-CBC") == 0 || strcmp(ALGS[i], "PRINCE-OFB") == 0
+            || strcmp(ALGS[i], "PRINCE-CFB") == 0)
+            test_iv_reinit(c, ALGS[i]);
+        if (strcmp(ALGS[i], "PRINCE-OFB") == 0 || strcmp(ALGS[i], "PRINCE-CFB") == 0) {
+            test_feedback_vectors(c, ALGS[i]);
+            test_feedback_rekey(c, ALGS[i]);
+            test_feedback_callbacks(c, ALGS[i]);
+        }
         EVP_CIPHER_free(c);
     }
 
