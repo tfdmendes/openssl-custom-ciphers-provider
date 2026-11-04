@@ -242,7 +242,7 @@ measure_performance() {
         provider="${providers[$index]}"
         printf '  [%s/%s] %s\n' "$((index + 1))" "${#algorithms[@]}" "$algorithm"
         printf '\n--- %s (%s) ---\n' "$algorithm" "$provider" >> "$environment_log"
-        if output=$(openssl speed "${provider_args[@]}" -propquery "provider=$provider" \
+        if output=$(openssl speed "${provider_args[@]}" -propquery "?provider=$provider" \
             -elapsed -seconds "$seconds" -mr -evp "$algorithm" 2>&1); then
             status=0
         else
