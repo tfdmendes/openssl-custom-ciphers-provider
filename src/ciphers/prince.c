@@ -95,11 +95,22 @@ static inline uint64_t inv_s_layer(uint64_t in) {
 
 #define ROTL16(x, s) ((((x) << (s)) & REP16((0xFFFFu << (s)) & 0xFFFFu)) | (((x) >> (16 - (s))) & REP16((1u << (s)) - 1u)))
 
+/* Unoptimized
 static inline uint64_t m_prime_layer(uint64_t x) {
     uint64_t r1 = ROTL16(x, 4), r2 = ROTL16(x, 8), r3 = ROTL16(x, 12);
     return x ^ r1 ^ r2 ^ r3 ^ (x & PRINCE_MR[0]) ^ (r1 & PRINCE_MR[1]) ^
            (r2 & PRINCE_MR[2]) ^ (r3 & PRINCE_MR[3]);
 }
+*/
+static inline uint64_t m_prime_layer(uint64_t x) {
+    uint64_t r2 = ROTL16(x, 8);
+    uint64_t sum = x ^ r2;
+    uint64_t all_rot = sum ^ ROTL16(sum, 4);
+
+    uint64_t r1 = ROTL16(x, 4);
+    uint64_t r3 = ROTL16(r1, 8); // Reuses the 8-bit rotate masks already in registers
+
+    return all_rot ^ (x & PRINCE_MR[0]) ^ (r1 & PRINCE_MR[1]) ^ (r2 & PRINCE_MR[2]) ^ (r3 & PRINCE_MR[3]);}
 
 static inline uint64_t shift_rows_layer(uint64_t in, int inverse) {
     const uint64_t row_mask = UINT64_C(0xF000F000F000F000);
