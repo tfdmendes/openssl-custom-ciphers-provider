@@ -12,7 +12,7 @@ usage() {
     printf 'Usage: bash %s [all | build check benchmark report] [--seconds N]\n' "$0"
     printf '\nStages (run in this order, regardless of argument order):\n'
     printf '  build      Compile the provider and C test programs.\n'
-    printf '  check      Run all five cipher and OpenSSL test suites using the existing build.\n'
+    printf '  check      Run all five suites and show known-answer inputs and results.\n'
     printf '  benchmark  Measure fresh encryption performance and save both tables and the log.\n'
     printf '  report     Display the saved tables and their measurement timestamp.\n'
     printf '  all        Run every stage (also the default when no stages are given).\n'
@@ -189,7 +189,23 @@ check_results() {
     done
     (
         cd "$build_dir"
-        ctest --output-on-failure
+        # CTest captures stdout, so tell the tests when the caller has a terminal
+        if [ -t 1 ] && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-}" != dumb ]; then
+            export CLICOLOR_FORCE=1
+        fi
+        ctest --verbose | awk '
+            /^UpdateCTestConfiguration / { next }
+            /^(Constructing a list of tests|Done constructing a list of tests|Updating test list for fixtures)$/ { next }
+            /^Added [0-9]+ tests to meet fixture requirements$/ { next }
+            /^Checking test dependency graph/ { next }
+            /^test [0-9]+$/ { next }
+            /^[0-9]+: (Test command:|Working Directory:|Test timeout computed to be:)/ { next }
+            {
+                sub(/^[0-9]+: /, "")
+                print
+                fflush()
+            }
+        '
     )
 }
 

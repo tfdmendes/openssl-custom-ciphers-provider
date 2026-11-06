@@ -5,6 +5,7 @@
 #include "ciphers/prince.h"
 #include "modes/modes.h"
 #include "modes/padding.h"
+#include "test_output.h"
 #include "vectors/prince_modes_kat.h"
 
 // The modes take a block_cipher_fn, these just call PRINCE with the right types
@@ -245,21 +246,24 @@ static void test_prince_modes_kat(void) {
         uint8_t pt[PRINCE_MODES_KAT_MAX_LEN];
         uint8_t ct[PRINCE_MODES_KAT_MAX_LEN];
         uint8_t decrypted[PRINCE_MODES_KAT_MAX_LEN];
+        char name[64];
+        const uint8_t *iv = v->mode == PRINCE_MODE_ECB ? NULL : v->iv;
 
         for (size_t j = 0; j < v->pt_len; j++) pt[j] = (uint8_t)(j * 31 + 7);
         prince_set_key(&ctx, v->key);
 
         size_t ct_len = kat_encrypt(v, &ctx, pt, ct);
-        if (ct_len != v->ct_len || memcmp(ct, v->ct, ct_len) != 0) {
-            fprintf(stderr, "Vector %zu (%s, %zu bytes): wrong ciphertext\n", i + 1, mode_names[v->mode], v->pt_len);
-            exit(1);
-        }
+        snprintf(name, sizeof(name), "PRINCE-%s encryption", mode_names[v->mode]);
+        test_output_case(2 * i + 1, name, v->key, sizeof(v->key), iv, sizeof(v->iv),
+                         "Original Text", pt, v->pt_len);
+        if (!test_output_result(v->ct, v->ct_len, ct, ct_len)) exit(1);
 
         long pt_len = kat_decrypt(v, &ctx, decrypted);
-        if (pt_len != (long)v->pt_len || memcmp(decrypted, pt, v->pt_len) != 0) {
-            fprintf(stderr, "Vector %zu (%s, %zu bytes): wrong plaintext\n", i + 1, mode_names[v->mode], v->pt_len);
-            exit(1);
-        }
+        snprintf(name, sizeof(name), "PRINCE-%s decryption", mode_names[v->mode]);
+        test_output_case(2 * i + 2, name, v->key, sizeof(v->key), iv, sizeof(v->iv),
+                         "Ciphertext", v->ct, v->ct_len);
+        if (!test_output_result(pt, v->pt_len, pt_len < 0 ? NULL : decrypted,
+                                pt_len < 0 ? 0 : (size_t)pt_len)) exit(1);
         if (v->mode == PRINCE_MODE_OFB || v->mode == PRINCE_MODE_CFB) {
             stream_mode_fn encrypt = v->mode == PRINCE_MODE_OFB ? mode_ofb_crypt : mode_cfb_encrypt;
             stream_mode_fn decrypt = v->mode == PRINCE_MODE_OFB ? mode_ofb_crypt : mode_cfb_decrypt;
@@ -319,7 +323,26 @@ static void test_nist_feedback_vectors(void) {
         const char *name = cfb ? "AES-CFB128" : "AES-OFB";
         stream_mode_fn encrypt = cfb ? mode_cfb_encrypt : mode_ofb_crypt;
         stream_mode_fn decrypt = cfb ? mode_cfb_decrypt : mode_ofb_crypt;
+        uint8_t feedback[16], cache[16], out[64];
+        unsigned int num = 0;
+        char description[64];
+
         decode_hex(ciphertexts[cfb], ct, sizeof(ct));
+        memcpy(feedback, iv, sizeof(iv));
+        encrypt(ctx, aes_enc_fn, 16, feedback, cache, &num, pt, out, sizeof(pt));
+        snprintf(description, sizeof(description), "%s encryption (NIST)", name);
+        test_output_case(2 * cfb + 1, description, key, sizeof(key), iv, sizeof(iv),
+                         "Original Text", pt, sizeof(pt));
+        if (!test_output_result(ct, sizeof(ct), out, sizeof(out))) exit(1);
+
+        memcpy(feedback, iv, sizeof(iv));
+        num = 0;
+        decrypt(ctx, aes_enc_fn, 16, feedback, cache, &num, ct, out, sizeof(ct));
+        snprintf(description, sizeof(description), "%s decryption (NIST)", name);
+        test_output_case(2 * cfb + 2, description, key, sizeof(key), iv, sizeof(iv),
+                         "Ciphertext", ct, sizeof(ct));
+        if (!test_output_result(pt, sizeof(pt), out, sizeof(out))) exit(1);
+
         for (size_t len = 0; len <= sizeof(pt); len++) {
             check_feedback_stream(name, encrypt, ctx, aes_enc_fn, 16, iv, pt, ct, len);
             check_feedback_stream(name, decrypt, ctx, aes_enc_fn, 16, iv, ct, pt, len);

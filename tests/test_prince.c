@@ -3,15 +3,8 @@
 #include <stdio.h>
 #include <string.h>
 #include "ciphers/prince.h"
+#include "test_output.h"
 #include "vectors/prince_kat.h"
-
-static void print_hex(const char *label, const uint8_t *data, size_t len) {
-    printf("%s: ", label);
-    for (size_t i = 0; i < len; i++) {
-        printf("%02x", data[i]);
-    }
-    printf("\n");
-}
 
 int main(void) {
     int failed = 0;
@@ -26,24 +19,20 @@ int main(void) {
         prince_set_key(&ctx, v->key);
         prince_encrypt_block(&ctx, v->pt, ct);
 
-        if (memcmp(ct, v->ct, PRINCE_BLOCK_SIZE) != 0) {
-            printf("[FAIL] Vector %zu Encryption Mismatch!\n", i+1);
-            print_hex("   Expected CT", v->ct, PRINCE_BLOCK_SIZE);
-            print_hex("   Actual CT  ", ct, PRINCE_BLOCK_SIZE);
+        test_output_case(2 * i + 1, "PRINCE encryption", v->key, sizeof(v->key),
+                         NULL, 0, "Original Text", v->pt, sizeof(v->pt));
+        if (!test_output_result(v->ct, sizeof(v->ct), ct, sizeof(ct))) {
             failed++;
             continue;
         }
 
         prince_decrypt_block(&ctx, ct, pt);
-        if (memcmp(pt, v->pt, PRINCE_BLOCK_SIZE) != 0) {
-            printf("[FAIL] Vector %zu Decryption Round-Trip Mismatch!\n", i+1);
-            print_hex("   Expected PT", v->pt, PRINCE_BLOCK_SIZE);
-            print_hex("   Actual PT  ", pt, PRINCE_BLOCK_SIZE);
+        test_output_case(2 * i + 2, "PRINCE decryption", v->key, sizeof(v->key),
+                         NULL, 0, "Ciphertext", ct, sizeof(ct));
+        if (!test_output_result(v->pt, sizeof(v->pt), pt, sizeof(pt))) {
             failed++;
             continue;
         }
-
-        printf("[PASS] Vector %zu passed encryption and decryption.\n", i+1);
     }
 
     if (failed == 0) {

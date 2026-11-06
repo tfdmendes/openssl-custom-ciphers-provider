@@ -4,19 +4,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include "ciphers/rabbit.h"
+#include "test_output.h"
 #include "vectors/rabbit_kat.h"
 
 #define KAT_STREAM_LEN (3 * RABBIT_BLOCK_SIZE)
 
 static int failed = 0;
-
-static void print_hex(const char *label, const uint8_t *data, size_t len) {
-    printf("%s: ", label);
-    for (size_t i = 0; i < len; i++) {
-        printf("%02x", data[i]);
-    }
-    printf("\n");
-}
 
 // The RFC vectors are big-endian, our implementation is little-endian
 static void reverse_bytes(uint8_t *dst, const uint8_t *src, size_t len) {
@@ -53,8 +46,12 @@ static void test_kat(void) {
         uint8_t expected[KAT_STREAM_LEN];
         uint8_t ks[KAT_STREAM_LEN];
         uint8_t ks_bytewise[KAT_STREAM_LEN];
+        uint8_t key[RABBIT_KEY_SIZE];
+        uint8_t iv[RABBIT_IV_SIZE];
 
         kat_expected(v, expected);
+        reverse_bytes(key, v->key, sizeof(key));
+        if (v->has_iv) reverse_bytes(iv, v->iv, sizeof(iv));
 
         // Encrypting zeros gives the keystream
         kat_setup(&ctx, v);
@@ -66,17 +63,13 @@ static void test_kat(void) {
             rabbit_crypt(&ctx, zeros + j, ks_bytewise + j, 1);
         }
 
-        if (memcmp(ks, expected, KAT_STREAM_LEN) != 0 ||
-            memcmp(ks_bytewise, expected, KAT_STREAM_LEN) != 0) {
-            printf("      [FAIL] Vector %zu (%s IV) keystream mismatch!\n", i + 1, v->has_iv ? "with" : "without");
-            print_hex("         Expected     ", expected, KAT_STREAM_LEN);
-            print_hex("         Actual       ", ks, KAT_STREAM_LEN);
-            print_hex("         Actual (1B)  ", ks_bytewise, KAT_STREAM_LEN);
-            failed++;
-            continue;
-        }
-
-        printf("      [PASS] Vector %zu (%s IV)\n", i + 1, v->has_iv ? "with" : "without");
+        test_output_case(2 * i + 1, "Rabbit encryption", key, sizeof(key),
+                         v->has_iv ? iv : NULL, sizeof(iv), "Original Text", zeros, sizeof(zeros));
+        int matches = test_output_result(expected, sizeof(expected), ks, sizeof(ks));
+        test_output_case(2 * i + 2, "Rabbit encryption, one-byte updates", key, sizeof(key),
+                         v->has_iv ? iv : NULL, sizeof(iv), "Original Text", zeros, sizeof(zeros));
+        int bytewise_matches = test_output_result(expected, sizeof(expected), ks_bytewise, sizeof(ks_bytewise));
+        if (!matches || !bytewise_matches) failed++;
         rabbit_cleanup(&ctx);
     }
 }

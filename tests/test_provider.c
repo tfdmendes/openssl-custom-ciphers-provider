@@ -12,8 +12,10 @@
 #include <openssl/provider.h>
 
 #include "vectors/prince_modes_kat.h"
+#include "test_output.h"
 
 static int failed = 0;
+static size_t vector_number = 0;
 
 #define CHECK(cond) do { \
     if (!(cond)) { printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond); failed = 1; } \
@@ -320,7 +322,19 @@ static void test_feedback_vectors(EVP_CIPHER *c, const char *name) {
                         int n = run_with_key(c, enc, pad, v->key, v->iv, input, len,
                                              chunks[k], in_place, out);
 
-                        CHECK(n == (int)len && memcmp(out, expected, len) == 0);
+                        if (pad == 0 && k == 0 && in_place == 0) {
+                            char description[128];
+
+                            snprintf(description, sizeof(description), "%s vector %zu %s",
+                                     name, i + 1, enc ? "encryption" : "decryption");
+                            test_output_case(++vector_number, description, v->key, 16, v->iv, 8,
+                                             enc ? "Original Text" : "Ciphertext", input, len);
+                            if (!test_output_result(expected, len, n < 0 ? NULL : out,
+                                                    n < 0 ? 0 : (size_t)n))
+                                failed = 1;
+                        } else {
+                            CHECK(n == (int)len && memcmp(out, expected, len) == 0);
+                        }
                     }
                 }
             }
