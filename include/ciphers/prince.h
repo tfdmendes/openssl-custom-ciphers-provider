@@ -15,6 +15,9 @@ typedef struct {
     uint64_t k0;
     uint64_t k0_prime;
     uint64_t k1;
+    uint64_t kp_enc[12][4];   // round keys for the bitsliced code
+    uint64_t kp_dec[12][4];
+    int use_avx2;
 } prince_ctx_t;
 
 /*
@@ -36,6 +39,13 @@ void prince_encrypt_block(const prince_ctx_t *ctx, const uint8_t in[PRINCE_BLOCK
  * out: 8-byte plaintext
  */
 void prince_decrypt_block(const prince_ctx_t *ctx, const uint8_t in[PRINCE_BLOCK_SIZE], uint8_t out[PRINCE_BLOCK_SIZE]);
+
+/*
+ * Encrypts / decrypts nblocks blocks of 8 bytes (ECB).
+ * in and out can be the same buffer.
+ */
+void prince_encrypt_blocks(const prince_ctx_t *ctx, const uint8_t *in, uint8_t *out, size_t nblocks);
+void prince_decrypt_blocks(const prince_ctx_t *ctx, const uint8_t *in, uint8_t *out, size_t nblocks);
 
 #ifdef  __cplusplus
 }

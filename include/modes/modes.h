@@ -56,6 +56,16 @@ void mode_ofb_crypt(const void *ctx, block_cipher_fn enc_fn, size_t block_size, 
 void mode_cfb_encrypt(const void *ctx, block_cipher_fn enc_fn, size_t block_size, uint8_t *ivec, uint8_t *ecount_buf, unsigned int *num, const uint8_t *in, uint8_t *out, size_t len);
 void mode_cfb_decrypt(const void *ctx, block_cipher_fn enc_fn, size_t block_size, uint8_t *ivec, uint8_t *ecount_buf, unsigned int *num, const uint8_t *in, uint8_t *out, size_t len);
 
+/*
+ * Same as above, but the cipher gets several blocks per call.
+ * Only for modes where blocks are independent. block_size <= 64.
+ */
+typedef void (*blocks_cipher_fn)(const void *ctx, const uint8_t *in, uint8_t *out, size_t nblocks);
+
+void mode_ecb_crypt_blocks(const void *ctx, blocks_cipher_fn cipher_fn, size_t block_size, const uint8_t *in, uint8_t *out, size_t len);
+void mode_cbc_decrypt_blocks(const void *ctx, blocks_cipher_fn dec_fn, size_t block_size, const uint8_t *iv, const uint8_t *in, uint8_t *out, size_t len, uint8_t *next_iv);
+void mode_ctr_crypt_blocks(const void *ctx, blocks_cipher_fn enc_fn, size_t block_size, uint8_t *ivec, uint8_t *ecount_buf, unsigned int *num, const uint8_t *in, uint8_t *out, size_t len);
+
 #ifdef __cplusplus
 }
 #endif

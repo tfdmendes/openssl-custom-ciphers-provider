@@ -18,7 +18,7 @@ static void prince_dec_fn(const void *ctx, const uint8_t *in, uint8_t *out) {
 }
 
 static void test_pkcs7_padding(void) {
-    printf("[1/6] Testing PKCS#7 padding...\n");
+    printf("[1/7] Testing PKCS#7 padding...\n");
 
     const size_t block_size = 8;
     uint8_t in[32];
@@ -61,7 +61,7 @@ static void test_pkcs7_padding(void) {
 }
 
 static void test_prince_ecb(void) {
-    printf("[2/6] Testing PRINCE ECB mode...\n");
+    printf("[2/7] Testing PRINCE ECB mode...\n");
     prince_ctx_t ctx;
     uint8_t key[16] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff};
     prince_set_key(&ctx, key);
@@ -81,7 +81,7 @@ static void test_prince_ecb(void) {
 }
 
 static void test_prince_cbc(void) {
-    printf("[3/6] Testing PRINCE CBC mode...\n");
+    printf("[3/7] Testing PRINCE CBC mode...\n");
     prince_ctx_t ctx;
     uint8_t key[16] = {0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0xfe, 0xdc, 0xba, 0x98, 0x76, 0x54, 0x32, 0x10};
     uint8_t iv[8] = {0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80};
@@ -102,7 +102,7 @@ static void test_prince_cbc(void) {
 }
 
 static void test_prince_ctr(void) {
-    printf("[4/6] Testing PRINCE CTR mode (arbitrary length stream)...\n");
+    printf("[4/7] Testing PRINCE CTR mode (arbitrary length stream)...\n");
     prince_ctx_t ctx;
     uint8_t key[16] = {0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99};
     uint8_t iv1[8] = {0xf0, 0xe1, 0xd2, 0xc3, 0xb4, 0xa5, 0x96, 0x87};
@@ -237,7 +237,7 @@ static void check_feedback_stream(const char *name, stream_mode_fn mode, const v
 }
 
 static void test_prince_modes_kat(void) {
-    printf("[5/6] Testing PRINCE ECB/CBC/CTR/OFB/CFB test vectors...\n");
+    printf("[5/7] Testing PRINCE ECB/CBC/CTR/OFB/CFB test vectors...\n");
     const char *mode_names[] = {"ECB", "CBC", "CTR", "OFB", "CFB"};
 
     for (size_t i = 0; i < PRINCE_MODES_KAT_COUNT; i++) {
@@ -310,7 +310,7 @@ static void test_nist_feedback_vectors(void) {
     uint8_t key[16], iv[16], pt[64], ct[64];
     EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
 
-    printf("[6/6] Testing NIST AES OFB/CFB128 vectors, byte splits and in-place operation...\n");
+    printf("[6/7] Testing NIST AES OFB/CFB128 vectors, byte splits and in-place operation...\n");
     decode_hex("2b7e151628aed2a6abf7158809cf4f3c", key, sizeof(key));
     decode_hex("000102030405060708090a0b0c0d0e0f", iv, sizeof(iv));
     decode_hex(plaintext, pt, sizeof(pt));
@@ -352,6 +352,85 @@ static void test_nist_feedback_vectors(void) {
     printf("      NIST OFB/CFB128 vectors and streaming checks passed.\n");
 }
 
+static void prince_enc_blocks_fn(const void *ctx, const uint8_t *in, uint8_t *out, size_t nblocks) {
+    prince_encrypt_blocks((const prince_ctx_t *)ctx, in, out, nblocks);
+}
+
+static void prince_dec_blocks_fn(const void *ctx, const uint8_t *in, uint8_t *out, size_t nblocks) {
+    prince_decrypt_blocks((const prince_ctx_t *)ctx, in, out, nblocks);
+}
+
+static void test_multi_block_modes(void) {
+    printf("[7/7] Testing multi-block ECB/CBC/CTR...\n");
+    enum { MAX = 8 * 160 };
+    static uint8_t pt[MAX], ref[MAX], out[MAX], back[MAX];
+    uint8_t key[16], iv[8];
+    prince_ctx_t ctx;
+
+    for (size_t i = 0; i < sizeof(key); i++) key[i] = (uint8_t)(i * 17 + 3);
+    for (size_t i = 0; i < sizeof(iv); i++) iv[i] = (uint8_t)(0xf0 - i * 9);
+    for (size_t i = 0; i < MAX; i++) pt[i] = (uint8_t)(i * 131 + 11);
+    prince_set_key(&ctx, key);
+
+    for (int avx2 = 0; avx2 < 2; avx2++) {
+        if (avx2 && !ctx.use_avx2) continue;
+        prince_ctx_t c = ctx;
+        c.use_avx2 = avx2;
+
+        for (size_t len = 0; len <= MAX; len += 8) {
+            for (int in_place = 0; in_place < 2; in_place++) {
+                uint8_t next_ref[8], next[8];
+
+                /* ECB */
+                mode_ecb_crypt(&c, prince_enc_fn, 8, pt, ref, len);
+                memcpy(out, pt, len);
+                mode_ecb_crypt_blocks(&c, prince_enc_blocks_fn, 8, in_place ? out : pt, out, len);
+                memcpy(back, out, len);
+                mode_ecb_crypt_blocks(&c, prince_dec_blocks_fn, 8, back, back, len);
+                if (memcmp(out, ref, len) != 0 || memcmp(back, pt, len) != 0) {
+                    fprintf(stderr, "multi-block ECB failed (len %zu, avx2 %d)\n", len, avx2);
+                    exit(1);
+                }
+
+                /* CBC decryption */
+                mode_cbc_encrypt(&c, prince_enc_fn, 8, iv, pt, ref, len, NULL);
+                mode_cbc_decrypt(&c, prince_dec_fn, 8, iv, ref, back, len, next_ref);
+                memcpy(out, ref, len);
+                mode_cbc_decrypt_blocks(&c, prince_dec_blocks_fn, 8, iv, in_place ? out : ref, out, len, next);
+                if (memcmp(out, pt, len) != 0 || memcmp(back, pt, len) != 0 || memcmp(next, next_ref, 8) != 0) {
+                    fprintf(stderr, "multi-block CBC decrypt failed (len %zu, avx2 %d)\n", len, avx2);
+                    exit(1);
+                }
+            }
+        }
+
+        // CTR split in two calls
+        const size_t lens[] = {0, 1, 7, 8, 9, 31, 32, 33, 127, 128, 129, 511, 512, 513, 777, MAX};
+        for (size_t li = 0; li < sizeof(lens) / sizeof(lens[0]); li++) {
+            const size_t len = lens[li];
+            uint8_t ctr_ref[8], ec_ref[8] = {0};
+            unsigned int num_ref = 0;
+            memcpy(ctr_ref, iv, 8);
+            mode_ctr_crypt(&c, prince_enc_fn, 8, ctr_ref, ec_ref, &num_ref, pt, ref, len);
+
+            for (size_t split = 0; split <= len; split += (len > 64 ? 13 : 1)) {
+                uint8_t ctr[8], ec[8] = {0};
+                unsigned int num = 0;
+                memcpy(ctr, iv, 8);
+                memcpy(out, pt, len);
+                mode_ctr_crypt_blocks(&c, prince_enc_blocks_fn, 8, ctr, ec, &num, out, out, split);
+                mode_ctr_crypt_blocks(&c, prince_enc_blocks_fn, 8, ctr, ec, &num, out + split, out + split, len - split);
+                if (memcmp(out, ref, len) != 0 || num != num_ref || memcmp(ctr, ctr_ref, 8) != 0
+                        || (num != 0 && memcmp(ec, ec_ref, 8) != 0)) {
+                    fprintf(stderr, "multi-block CTR failed (len %zu, split %zu, avx2 %d)\n", len, split, avx2);
+                    exit(1);
+                }
+            }
+        }
+    }
+    printf("      Multi-block modes passed.\n");
+}
+
 int main(void) {
     printf("Running Block Cipher Modes and PKCS#7 Tests...\n\n");
     test_pkcs7_padding();
@@ -360,6 +439,7 @@ int main(void) {
     test_prince_ctr();
     test_prince_modes_kat();
     test_nist_feedback_vectors();
+    test_multi_block_modes();
     printf("\nAll Modes and Padding tests passed successfully!\n");
     return 0;
 }
